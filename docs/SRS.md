@@ -4,6 +4,8 @@
 
 v1.1 變更：教材來源由「Notion HTML / Markdown 匯出檔」改為「Notion API 單向同步」；檔案匯入降為 P1 備援（FR-01、FR-16、§6、§7、NFR-04、AT-01、AT-13、§12、§13）。
 
+v1.2 變更：依實際 Notion 頁面結構，改為「整頁教材僅存後端＋學生可見內容白名單」；同步時以 LLM 抽取章節結構化欄位，可人工修正（FR-02、§6.2、§6.4、§7、AT-01、§13）。
+
 產品目標：使用既有 Notion 英文課程筆記，打造免費優先、以口說練習為核心、可持續複習的 AI 英文老師網站。
 
 # 0. 文件定義與優先級
@@ -54,7 +56,7 @@ v1.1 變更：教材來源由「Notion HTML / Markdown 匯出檔」改為「Noti
 | ID    | 優先 | 需求與可觀察行為                                                                       |
 |-------|------|----------------------------------------------------------------------------------------|
 | FR-01 | P0   | 透過 Notion API 單向同步課程資料庫「Language bar」中的所有課程（排除 Template 等非課程列）；手動「重新同步」，以 last_edited_time 判斷是否有變更；同步結果與無法解析的區塊以警告列出。 |
-| FR-02 | P0   | 顯示課程列表、標題、章節、字彙；課程內容可人工檢視與修正。                             |
+| FR-02 | P0   | 顯示課程列表、標題、章節、字彙；LLM 抽取的章節結構（題目、字彙、參考答案）可人工檢視與修正，修正後不被下次同步覆蓋（除非該章節在 Notion 有變更並經確認）。 |
 | FR-03 | P0   | 選課後由老師主動開始對話，一次只問一個主要問題。                                       |
 | FR-04 | P0   | 輪流語音：老師播音完成後方可開始學生錄音；手動開始/結束、重錄、文字輸入備援。          |
 | FR-05 | P0   | STT 結果必須可檢視及編輯；不得以未確認的 STT 錯字直接計算文法錯誤。                    |
@@ -129,7 +131,9 @@ v1.1 變更：教材來源由「Notion HTML / Markdown 匯出檔」改為「Noti
 
 # 6. Notion 同步與資料模型
 
-Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包含 Learning materials、Warm-up、Short Talk、Vocabulary、Conversation、GROUP ACTIVITY。教材答案與學生可見練習內容分離，避免提前洩題。
+Notion 原始章節名稱需保留。例如樣本「A2 基礎會話c 3/10」包含 Learning materials、Warm-up、Short Talk、Vocabulary、Conversation、GROUP ACTIVITY。
+
+實際頁面以答案與筆記為主（中英對照、完整填空答案、範例回答、學生本人的 Short Talk 回答與 Warm-up 日記），且沒有任何「這是答案」的標記；題目與圖片主要在 Learning materials 的 PDF 中。因此：**整頁 Notion 內容視為老師教材，只存在後端並提供給 LLM；學生端只顯示白名單欄位**（見 §6.4），其餘一律不輸出，避免提前洩題。
 
 ## 6.1 Notion 連線
 
@@ -142,20 +146,23 @@ Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包
 - 讀取頁面屬性與完整 block 樹：遞迴讀取 `has_children` 的子區塊，並處理分頁（每次最多 100 筆）。
 - 課程清單：教材來源為 Notion 資料庫「Language bar」，每一列（頁面）為一堂課。目前欄位只有 Doc name、Created by、Created time、Last edited by、Last updated time，沒有程度或主題欄位。
 - 排除非課程列：例如「Template」。標題不符合課程命名規則的列不匯入，並列入警告。
-- 從標題解析課程資訊：例如「A2 基礎會話c 3/10」→ level `A2`、course `基礎會話`、series `c`、unit `3`、totalUnits `10`。實際標題的系列字母前可能沒有空格，解析時需容許空白差異。課程列表依 series、unit 排序。
+- 從標題解析課程資訊：例如「A2 基礎會話c 3/10」→ level `A2`、course `基礎會話`、series `c`、unit `3`、totalUnits `10`。實際標題前後可能有多餘空白（例如開頭空格），系列字母前也可能沒有空格，解析前需 trim 並容許空白差異。課程列表依 series、unit 排序。
 - 增量同步：查詢資料庫時比較每列的 last_edited_time 與本機快照，只重新讀取有變更的頁面的 block 樹。
-- 章節對應：以 heading 區塊切分 Section，保留原始標題文字；段落、清單、表格、toggle、callout 等轉為純文字/Markdown 存入 Section。
+- 章節切分（固定規則）：每個頂層、可收合的 heading_1 為一個 Section，保留原始標題文字；其下所有區塊轉為 Markdown 存入 `sourceMarkdown`。頂層但不在任何 heading_1 收合區內的區塊，歸入前一個 Section。
+- 章節名稱每課不同（例如 Reading、Grammar／拼錯的 Gramma、Expression、Discussion、Statement Debate），`kind` 以已知名稱對應（warm-up、short-talk、vocabulary、conversation、grammar、group-activity、speaking、learning-materials 等），無法對應者為 `other`，不得因未知名稱而略過內容。
+- 空殼章節：內容為空、或只重複標題文字（例如 Template 遺留的「Extended Learning」）的 Section 不匯入。
+- 段落內部格式不一致（題目可能是 heading_2/heading_3/編號清單，答案寫法多樣），不以固定規則解析題目與答案，改由 §6.4 的 LLM 抽取。
 - 不支援或無法解析的區塊（例如 unsupported、embed）不中斷同步，列入警告。
 - 同步結果為 SQLite 快照：上課時只讀 SQLite，不在每輪對話呼叫 Notion API；Notion 斷線時已同步的課程仍可上課。
 - 重新同步以 Notion page id / block id 作為穩定 ID 更新快照，不重複建立課程；已存在的 Session 進度保留，對應章節被刪除時標示為失效而非直接刪除紀錄。
 - 遵守 Notion API 速率限制（平均約每秒 3 個請求）：同步時節流，收到 429 時依 Retry-After 重試。
-- Notion 託管檔案（圖片、PDF）的下載連結會過期，不可永久保存原始 URL；需於檢視時重新取得或下載至本機。
+- Learning materials 的 PDF 可能是外部連結（例如 storage.googleapis.com）或 Notion 託管檔案。P0 只提供連結/嵌入檢視，不解析 PDF 內容。Notion 託管檔案的下載連結會過期，不可永久保存原始 URL，需於檢視時重新取得；外部連結是否會過期待觀察。
 
 ## 6.3 資料模型
 
 > Lesson { id, notionPageId, title, level, course, series, unit, totalUnits, topic, sections\[\], notionLastEditedAt, lastSyncedAt }
 >
-> Section { id, lessonId, notionBlockId, kind, title, prompts\[\], vocabulary\[\], referenceAnswers\[\], resources\[\], stale }
+> Section { id, lessonId, notionBlockId, kind, title, sourceMarkdown, sourceHash, prompts\[\], vocabulary\[\], referenceAnswers\[\], resources\[\], extractionStatus, editedByUser, stale }
 >
 > Session { id, lessonId, sectionId, state, startedAt, endedAt, settingsSnapshot }
 >
@@ -164,6 +171,13 @@ Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包
 > Feedback { id, turnId, type, original, suggestion, reasonZh, deferred, reviewStatus }
 
 使用 SQLite 儲存結構化課程、對話與設定。Notion 內容在前端呈現時須跳脫，連結只允許 http(s)。
+
+## 6.4 章節內容抽取與學生可見範圍
+
+- 同步後，對每個新增或 `sourceHash` 有變更的 Section 呼叫一次 LLM，從 `sourceMarkdown` 抽取 `prompts`（老師可問的題目）、`vocabulary`（單字＋中文）、`referenceAnswers`（標準答案、範例回答、學生先前的回答）。輸出需以 schema 驗證，失敗時重試一次，再失敗則標記 `extractionStatus = failed`，上課時退回直接以 `sourceMarkdown` 作為老師教材。
+- 未變更的 Section 不重新抽取，以節省 LLM 用量。使用者手動修正過的 Section（`editedByUser`）在 Notion 有變更時，需提示使用者選擇保留修正或重新抽取，不得自動覆蓋。
+- 學生端白名單：課程標題、章節標題、`prompts`、`vocabulary` 的單字表、Learning materials 連結。`sourceMarkdown`、`referenceAnswers` 及其他欄位只在後端使用，不由學生端 API 輸出。
+- 教材中含學生個人生活內容（例如 Warm-up 日記），會隨課程內容傳給 LLM 供應商；需依 §9 在介面標示第三方資料傳輸。
 
 # 7. 系統架構與 API
 
@@ -180,9 +194,10 @@ Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包
 | GET /api/notion/status        | 檢查 Notion Token 是否設定、是否可連線         |
 | POST /api/lessons/sync        | 同步「Language bar」資料庫（資料庫 ID 存於 `NOTION_LESSONS_DATABASE_ID`，也可傳入連結），回傳警告與課程清單 |
 | POST /api/lessons/:id/sync    | 重新同步單一課程                               |
+| PUT /api/lessons/:id/sections/:sectionId | 人工修正 LLM 抽取的題目、字彙與參考答案 |
 | POST /api/lessons/import      | （P1）檔案匯入備援：HTML、Markdown 或 ZIP      |
 | GET /api/lessons              | 列出可上課教材                                 |
-| GET /api/lessons/:id          | 讀取教材與章節（學生端不公開標準答案）         |
+| GET /api/lessons/:id          | 讀取教材與章節（只輸出 §6.4 白名單欄位）       |
 | POST /api/sessions            | 開始課程、載入設定與進度                       |
 | POST /api/sessions/:id/turns  | 提交已確認逐字稿，取得老師回覆、糾錯與下一步   |
 | POST /api/sessions/:id/finish | 結束課程並產生課後回顧                         |
@@ -233,7 +248,7 @@ Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包
 
 | 編號  | 情境                  | 通過條件                                         |
 |-------|-----------------------|--------------------------------------------------|
-| AT-01 | 透過 Notion API 同步樣本課程 | 保留課程標題、原始章節名稱與字彙，可在課程頁選擇；重新同步不重複建立課程、不遺失進度 |
+| AT-01 | 透過 Notion API 同步樣本課程 | 保留課程標題、原始章節名稱與字彙，可在課程頁選擇；略過 Template 與空殼章節；學生端 API 不含 `sourceMarkdown` 與參考答案；重新同步不重複建立課程、不遺失進度與人工修正 |
 | AT-02 | 老師主動開課          | 從 Warm-up 自動提出首題且播放英文語音            |
 | AT-03 | 英文語音回答          | 結束錄音後出現可修改逐字稿，提交後有貼題追問     |
 | AT-04 | 中文回答              | 得到忠實自然的 A2 英文說法、朗讀、跟讀或跳過選項 |
@@ -279,6 +294,8 @@ Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包
 
 - Notion 新版 API 將資料庫拆為 database 與 data source，查詢端點依 API 版本不同；實作時以固定的版本為準。
 
-- 待確認：標準答案在頁面中的標示方式（例如放在 toggle 內或特定標題下），解析器需依此規則把 referenceAnswers 與學生可見內容分開。需以實際頁面結構確認後再實作。
+- LLM 抽取章節結構可能漏抓或誤判，尤其是格式特殊的章節；以人工修正（FR-02）與 `sourceMarkdown` 退回機制降低影響，並以多課實際頁面（至少 b、c 兩個系列）測試抽取品質。
+
+- 題目與圖片主要在 PDF 中而 P0 不解析 PDF，部分練習（例如看圖說明）老師只能依 Notion 筆記引導；是否於 P1 解析 PDF 待評估。
 
 文件結束 — 本規格適用於單一使用者、免費優先的 MVP；追加需求需標註 P0/P1/P2 與驗收標準。
