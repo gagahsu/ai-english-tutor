@@ -1,0 +1,13 @@
+{
+  "name": "ai-english-tutor",
+  "private": true,
+  "workspaces": [
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w server",
+    "build": "npm run build -w server",
+    "typecheck": "npm run typecheck -w server",
+    "test": "npm test -w server"
+  }
+}

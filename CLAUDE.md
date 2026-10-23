@@ -4,7 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Spec-only. No application code, `package.json`, build, lint, or test tooling exists yet. The source of truth is `docs/SRS.md` (Traditional Chinese); `README.md` summarizes it. When implementation starts, add the real commands to this file. Project docs are written in Traditional Chinese (zh-TW), so keep new user-facing docs in that language unless asked otherwise.
+P0-1 (data layer: Notion sync, SQLite, lesson API) is implemented in `server/`. There is no frontend yet. P0-2 onward (LLM, sessions, voice UI) is not started. The source of truth for requirements is `docs/SRS.md` (Traditional Chinese); `README.md` summarizes it. Project docs are written in Traditional Chinese (zh-TW), so keep new user-facing docs in that language unless asked otherwise.
+
+## Commands
+
+npm workspaces (Node 22). Run these from the repo root:
+
+```sh
+npm install
+npm run dev         # API with reload on http://127.0.0.1:3001 (tsx watch)
+npm test            # vitest, all server tests
+npm run typecheck
+npm run build       # server/dist
+npx -w server vitest run test/sync.test.ts   # single file; add -t "<name>" for one test
+```
+
+Config comes from the repo-root `.env` (see `.env.example`): `NOTION_TOKEN`, `NOTION_LESSONS_DATABASE_ID`, and optionally `PORT` and `DATABASE_PATH` (default `data/tutor.db`, gitignored). Without Notion config the server still starts, sync returns `NOTION_NOT_CONFIGURED`, and already-synced lessons keep working.
+
+A full first sync of all lessons takes about 2 minutes because of Notion's ~3 req/s limit (one request per block that has children). Re-syncs only re-read lessons whose `last_edited_time` changed.
+
+## Server layout
+
+- `src/notion/gateway.ts` holds the only code that talks to Notion. It throttles requests and maps SDK errors to `AppError` codes with zh-TW guidance (`src/errors.ts`). Tests use `FakeGateway` (`test/fixtures.ts`). Test fixtures are synthetic; never copy real lesson content into the repo.
+- `src/notion/markdown.ts` converts blocks to Markdown and collects resources. `src/lessons/sections.ts` splits lessons into sections and maps kinds. `src/lessons/title.ts` parses titles. All three are pure functions.
+- `src/lessons/sync.ts` orchestrates sync. Only one sync can run at a time (409 `SYNC_IN_PROGRESS`). `src/lessons/repository.ts` holds the SQLite access and the snapshot merge rules. `src/db.ts` holds the schema as append-only migrations tracked by `PRAGMA user_version`.
+- `src/lessons/views.ts` holds the student-facing whitelist projections. `GET /api/lessons/:id/sections/:sectionId` is the deliberate exception: it is the full editing view for FR-02.
 
 ## What is being built
 
