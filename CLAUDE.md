@@ -8,7 +8,7 @@ Spec-only. No application code, `package.json`, build, lint, or test tooling exi
 
 ## What is being built
 
-A single-user AI English tutor website. It teaches from the user's Notion English-lesson exports (HTML/Markdown, optionally ZIP) through **turn-based voice conversation**, with a free-first cost model. The first end-to-end acceptance lesson is "A2 基礎會話 c 3/10" (Airport & Travel). That lesson material is private and is deliberately **not** in the repo, so don't commit lesson content without consent.
+A single-user AI English tutor website. It teaches from the user's Notion English-lesson pages, read via the **Notion API** (one-way, read-only sync; HTML/Markdown file import is only a P1 fallback), through **turn-based voice conversation**, with a free-first cost model. The first end-to-end acceptance lesson is "A2 基礎會話 c 3/10" (Airport & Travel). That lesson material is private and is deliberately **not** in the repo, so don't commit lesson content without consent.
 
 Planned stack (still to be validated in P0): React + Vite + TypeScript frontend, Node.js + Express backend, SQLite, Mistral LLM behind a provider adapter, browser Web Speech API for STT, and `speechSynthesis` for TTS.
 
@@ -16,17 +16,19 @@ Planned stack (still to be validated in P0): React + Vite + TypeScript frontend,
 
 ```
 Browser (UI + STT + TTS) ⇄ Node API (config/session/prompt) ⇄ LLM provider adapter → Mistral
-                               ⇅ SQLite + imported lesson assets
+                               ⇅ SQLite (lesson snapshots, sessions, settings)
+                           Node API → Notion API (sync only, read-only)
 ```
 
-- **LLM only via the backend.** The API key lives in server env vars (`.env`, gitignored; `.env.example` is allowed) and never in browser JS or exported lesson data. Keep the provider behind an adapter so it can be swapped, because Mistral free-tier limits change.
+- **Notion sync (SRS §6):** use `@notionhq/client` with a read-only internal integration token (`NOTION_TOKEN`) and a pinned API version. Pages must be shared with the integration through Connections. Sync walks the block tree recursively, handling pagination and throttling with 429/Retry-After. Headings split the content into Sections, and unsupported blocks become warnings. The result is a SQLite **snapshot**: lessons never call Notion during a turn. Notion page/block IDs are the stable keys, so a re-sync updates the snapshot in place without losing session progress, and sections that disappear are marked `stale`. Notion-hosted file URLs expire, so never persist them. The lesson source is one Notion database ("Language bar", ID in `NOTION_LESSONS_DATABASE_ID`), with one row per lesson. It has no level/topic properties, so metadata is parsed from titles like `A2 基礎會話c 3/10` (level, course, series, unit/total; spacing varies). Rows that don't match, such as `Template`, are skipped with a warning. Sync is incremental by `last_edited_time`. How reference answers are marked in the Notion pages is still TBD (SRS §13).
+- **LLM and Notion only via the backend.** Both API keys live in server env vars (`.env`, gitignored; `.env.example` is allowed) and never in browser JS or exported lesson data. Keep the provider behind an adapter so it can be swapped, because Mistral free-tier limits change.
 - **Structured LLM output.** The model returns JSON (`teacherReply`, `intent`, `nextAction`, `lessonSectionId`, `corrections[]`, `assistance{english, zhExplanation}`). The backend validates it against a schema. On invalid output it retries once, then degrades to a plain-text teacher reply. It must never crash the lesson.
 - **A teacher controller, not the LLM, owns lesson progression** (follow-up, hint, correct, or advance section). Section state must survive Chinese-assistance detours and errors.
 - **Voice state machine (frontend):** `IDLE → TEACHER_SPEAKING → WAITING_FOR_STUDENT → LISTENING → TRANSCRIPT_REVIEW → THINKING → TEACHER_SPEAKING`. The exception states are `MIC_DENIED`, `STT_UNSUPPORTED`, `STT_NO_MATCH`, `NETWORK_ERROR`, `LLM_RATE_LIMIT`, and `TTS_UNAVAILABLE`. Every one must fall back to text input or retry without losing the conversation. Recording is disabled while the teacher speaks. Turn submissions carry a `requestId` for dedup.
 - **STT transcripts must be reviewed by the student** (editable, `verifiedByStudent`) before submission. Unverified STT text must not count toward grammar errors. The STT language is an explicit en-US / zh-TW toggle; don't assume mixed-language auto-detection.
 - **Data model:** `Lesson → Section` (kind keeps the original Notion headings such as Warm-up, Short Talk, Vocabulary, Conversation, and GROUP ACTIVITY). `Session → Turn → Feedback` (`deferred` flag for after-class corrections). `referenceAnswers` are stored separately and must not be returned by student-facing endpoints (`GET /api/lessons/:id`).
-- **Import safety:** sanitize HTML by removing scripts, event handlers, and dangerous links. ZIP imports must guard against path traversal and zip bombs. Enforce size limits.
-- **API surface:** `/api/lessons` (import, list, get), `/api/sessions` (create, `:id/turns`, `:id/finish`, get), `/api/settings`. See SRS §7.
+- **Rendering safety:** escape Notion content when rendering and allow only http(s) links. The P1 file import must sanitize HTML and guard ZIPs against path traversal and zip bombs.
+- **API surface:** `/api/notion/status`, `/api/lessons` (sync, `:id/sync`, list, get; `import` is P1), `/api/sessions` (create, `:id/turns`, `:id/finish`, get), `/api/settings`. See SRS §7.
 
 ## Teaching behavior invariants (SRS §4)
 
@@ -38,4 +40,4 @@ Browser (UI + STT + TTS) ⇄ Node API (config/session/prompt) ⇄ LLM provider a
 
 ## Roadmap
 
-The P0 milestones (P0-1 data layer through P0-5 acceptance) are in SRS §12. The MVP is done only when acceptance tests AT-01 to AT-12 (SRS §11) pass. Features tagged P1/P2 are out of scope for P0. New requirements should be tagged P0/P1/P2 with acceptance criteria.
+The P0 milestones (P0-1 data layer through P0-5 acceptance) are in SRS §12. The MVP is done only when acceptance tests AT-01 to AT-13 (SRS §11) pass. Features tagged P1/P2 are out of scope for P0. New requirements should be tagged P0/P1/P2 with acceptance criteria.

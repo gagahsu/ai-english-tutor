@@ -6,7 +6,7 @@
 
 ## 產品目標
 
-- 匯入 Notion 匯出的 HTML / Markdown 英文課教材，依課程段落進行教學。
+- 透過 Notion API 直接同步 Notion 英文課教材，依課程段落進行教學。
 - AI 老師主動提問，學生透過麥克風回答，使用語音辨識與語音播放完成輪流對話。
 - 採用 **Balanced 糾錯**：重要錯誤當下糾正，一般錯誤留到課後整理。
 - 老師使用**英文為主**，預設 A2 程度，語速 Normal (`1.0`)。
@@ -27,13 +27,13 @@
 | STT | Browser Web Speech API |
 | TTS | Browser SpeechSynthesis |
 | 資料保存 | SQLite |
-| 教材來源 | Notion HTML / Markdown 匯出 |
+| 教材來源 | Notion API（Internal Integration，唯讀）；HTML / Markdown 匯入為 P1 備援 |
 
 免費 API 額度、語音辨識的瀏覽器支援與語音品質依實際環境而異，不能保證完全免費或所有裝置一致。
 
 ## 開發路線圖
 
-- **P0｜可上完一堂課**：匯入教材、語音輪流互動、AI 課程引導、中英混用求助、Balanced 糾錯、基本學習紀錄、錯誤處理與驗收測試。
+- **P0｜可上完一堂課**：Notion 教材同步、語音輪流互動、AI 課程引導、中英混用求助、Balanced 糾錯、基本學習紀錄、錯誤處理與驗收測試。
 - **P1｜長期學習**：批次課程管理、歷史紀錄、錯誤複習、課後報告與更多設定。
 - **P2｜體驗優化**：自動判斷說話結束、更佳語音模型、進階情境練習及跨裝置體驗。
 
@@ -45,7 +45,7 @@
 
 ## 安全原則
 
-- 不將 Mistral API Key 寫入前端程式或提交至 Git。
+- 不將 Mistral API Key、Notion Integration Token 寫入前端程式或提交至 Git。
 - 使用 `.env`（排除版本控制）管理敏感設定。
 - 優先以私有儲存庫管理規格和後續課程資料。
 

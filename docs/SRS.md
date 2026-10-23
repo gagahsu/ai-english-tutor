@@ -1,6 +1,8 @@
 # AI 英文家教網站 — 軟體需求規格書（SRS）
 
-版本 v1.0 \| 日期：2026-10-21 \| 狀態：開發基準／待實作
+版本 v1.1 \| 日期：2026-10-23 \| 狀態：開發基準／待實作
+
+v1.1 變更：教材來源由「Notion HTML / Markdown 匯出檔」改為「Notion API 單向同步」；檔案匯入降為 P1 備援（FR-01、FR-16、§6、§7、NFR-04、AT-01、AT-13、§12、§13）。
 
 產品目標：使用既有 Notion 英文課程筆記，打造免費優先、以口說練習為核心、可持續複習的 AI 英文老師網站。
 
@@ -11,7 +13,7 @@
 | P0 / Must   | 第一版 MVP 必須具備，缺少則不可驗收                       |
 | P1 / Should | 第二階段，強化可長期學習能力                              |
 | P2 / Could  | 第三階段，強化流暢度與品質                                |
-| 不在 P0     | 真人即時打斷、完整發音評分、Notion 雙向同步、多人付費訂閱 |
+| 不在 P0     | 真人即時打斷、完整發音評分、寫回 Notion（P0 只做單向讀取）、多人付費訂閱 |
 
 本文件由已確認需求整理；未經實測的免費 API 用量、跨瀏覽器 STT 可用性與特定服務價格均視為待驗證的技術風險，而非保證。
 
@@ -23,11 +25,15 @@
 
 - 輸入語言：英語、繁體中文或兩者混合。英文仍為老師主導教學語言。
 
-- 成本原則：免費開源前後端、本機 SQLite、瀏覽器 STT/TTS、可用免費額度的 LLM；提供限制與降級處理。
+- 教材來源：透過 Notion API 直接讀取使用者的 Notion 課程頁面，不需手動匯出檔案。
+
+- 成本原則：免費開源前後端、本機 SQLite、瀏覽器 STT/TTS、Notion API（Internal Integration）、可用免費額度的 LLM；提供限制與降級處理。
 
 - MVP 成功條件：以「A2 基礎會話 c 3/10」完成一輪可重複的語音課程，並保存進度與回饋。
 
 # 2. 主要使用者流程
+
+0\. （首次或教材更新時）按下「從 Notion 同步」→ 後端透過 Notion API 讀取課程資料庫 → 檢視同步結果與警告。
 
 1\. 開啟網站 → 選擇課程 → 檢查麥克風與語音播放。
 
@@ -47,7 +53,7 @@
 
 | ID    | 優先 | 需求與可觀察行為                                                                       |
 |-------|------|----------------------------------------------------------------------------------------|
-| FR-01 | P0   | 匯入單篇或多篇 Notion HTML / Markdown；支援 ZIP 批次匯入（含檔案路徑安全檢查）。       |
+| FR-01 | P0   | 透過 Notion API 單向同步課程資料庫「Language bar」中的所有課程（排除 Template 等非課程列）；手動「重新同步」，以 last_edited_time 判斷是否有變更；同步結果與無法解析的區塊以警告列出。 |
 | FR-02 | P0   | 顯示課程列表、標題、章節、字彙；課程內容可人工檢視與修正。                             |
 | FR-03 | P0   | 選課後由老師主動開始對話，一次只問一個主要問題。                                       |
 | FR-04 | P0   | 輪流語音：老師播音完成後方可開始學生錄音；手動開始/結束、重錄、文字輸入備援。          |
@@ -62,6 +68,7 @@
 | FR-13 | P1   | 跨課程複習、間隔複習、個人薄弱項目標記。                                               |
 | FR-14 | P1   | 多課程管理、章節進度條、複習歷史、搜尋及課程重新整理。                                 |
 | FR-15 | P2   | 自動偵測回答結束；更穩定的中英混合語音辨識及品質更好的語音引擎。                       |
+| FR-16 | P1   | 檔案匯入備援：匯入 Notion 匯出的 HTML / Markdown / ZIP（HTML 消毒、ZIP 防路徑穿越與壓縮炸彈），供無法使用 Notion API 時使用。 |
 
 # 4. AI 老師教學行為規格
 
@@ -120,13 +127,35 @@
 
 - 短時間內請求重複提交需有 requestId 去重，避免同一個回答引發多次老師回覆。
 
-# 6. 教材匯入與資料模型
+# 6. Notion 同步與資料模型
 
-Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10」包含 Learning materials、Warm-up、Short Talk、Vocabulary、Conversation、GROUP ACTIVITY。教材答案與學生可見練習內容分離，避免提前洩題。
+Notion 原始章節名稱需保留。例如樣本「A2 基礎會話 c 3/10」包含 Learning materials、Warm-up、Short Talk、Vocabulary、Conversation、GROUP ACTIVITY。教材答案與學生可見練習內容分離，避免提前洩題。
 
-> Lesson { id, title, level, topic, sections\[\], sourceFile, importedAt }
+## 6.1 Notion 連線
+
+- 使用 Notion Internal Integration，只開啟「讀取內容」權限；Token 存於伺服器環境變數 `NOTION_TOKEN`。
+- 使用者需在 Notion 將課程頁面（或其上層頁面/資料庫）透過 Connections 分享給此 Integration，否則 API 讀不到；未分享時需顯示明確的設定指引。
+- 後端使用官方 SDK `@notionhq/client`，並固定 API 版本（Notion-Version）；版本升級須重新驗證解析結果。
+
+## 6.2 同步流程
+
+- 讀取頁面屬性與完整 block 樹：遞迴讀取 `has_children` 的子區塊，並處理分頁（每次最多 100 筆）。
+- 課程清單：教材來源為 Notion 資料庫「Language bar」，每一列（頁面）為一堂課。目前欄位只有 Doc name、Created by、Created time、Last edited by、Last updated time，沒有程度或主題欄位。
+- 排除非課程列：例如「Template」。標題不符合課程命名規則的列不匯入，並列入警告。
+- 從標題解析課程資訊：例如「A2 基礎會話c 3/10」→ level `A2`、course `基礎會話`、series `c`、unit `3`、totalUnits `10`。實際標題的系列字母前可能沒有空格，解析時需容許空白差異。課程列表依 series、unit 排序。
+- 增量同步：查詢資料庫時比較每列的 last_edited_time 與本機快照，只重新讀取有變更的頁面的 block 樹。
+- 章節對應：以 heading 區塊切分 Section，保留原始標題文字；段落、清單、表格、toggle、callout 等轉為純文字/Markdown 存入 Section。
+- 不支援或無法解析的區塊（例如 unsupported、embed）不中斷同步，列入警告。
+- 同步結果為 SQLite 快照：上課時只讀 SQLite，不在每輪對話呼叫 Notion API；Notion 斷線時已同步的課程仍可上課。
+- 重新同步以 Notion page id / block id 作為穩定 ID 更新快照，不重複建立課程；已存在的 Session 進度保留，對應章節被刪除時標示為失效而非直接刪除紀錄。
+- 遵守 Notion API 速率限制（平均約每秒 3 個請求）：同步時節流，收到 429 時依 Retry-After 重試。
+- Notion 託管檔案（圖片、PDF）的下載連結會過期，不可永久保存原始 URL；需於檢視時重新取得或下載至本機。
+
+## 6.3 資料模型
+
+> Lesson { id, notionPageId, title, level, course, series, unit, totalUnits, topic, sections\[\], notionLastEditedAt, lastSyncedAt }
 >
-> Section { id, lessonId, kind, title, prompts\[\], vocabulary\[\], referenceAnswers\[\], resources\[\] }
+> Section { id, lessonId, notionBlockId, kind, title, prompts\[\], vocabulary\[\], referenceAnswers\[\], resources\[\], stale }
 >
 > Session { id, lessonId, sectionId, state, startedAt, endedAt, settingsSnapshot }
 >
@@ -134,7 +163,7 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 >
 > Feedback { id, turnId, type, original, suggestion, reasonZh, deferred, reviewStatus }
 
-使用 SQLite 儲存結構化課程、對話與設定；匯入的 HTML 必須消毒（移除 script、事件處理器及危險連結），ZIP 必須防路徑穿越與壓縮炸彈。
+使用 SQLite 儲存結構化課程、對話與設定。Notion 內容在前端呈現時須跳脫，連結只允許 http(s)。
 
 # 7. 系統架構與 API
 
@@ -142,11 +171,16 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 
 > Browser (UI + STT + TTS) ⇄ Node API (auth/config/session/prompt) ⇄ Mistral LLM
 >
-> ⇅ SQLite + imported lesson assets
+> ⇅ SQLite（課程快照、對話、設定）
+>
+> Node API → Notion API（僅同步時，唯讀）
 
 | Endpoint                      | 用途                                           |
 |-------------------------------|------------------------------------------------|
-| POST /api/lessons/import      | 匯入 HTML、Markdown 或 ZIP，回傳警告與課程清單 |
+| GET /api/notion/status        | 檢查 Notion Token 是否設定、是否可連線         |
+| POST /api/lessons/sync        | 同步「Language bar」資料庫（資料庫 ID 存於 `NOTION_LESSONS_DATABASE_ID`，也可傳入連結），回傳警告與課程清單 |
+| POST /api/lessons/:id/sync    | 重新同步單一課程                               |
+| POST /api/lessons/import      | （P1）檔案匯入備援：HTML、Markdown 或 ZIP      |
 | GET /api/lessons              | 列出可上課教材                                 |
 | GET /api/lessons/:id          | 讀取教材與章節（學生端不公開標準答案）         |
 | POST /api/sessions            | 開始課程、載入設定與進度                       |
@@ -155,7 +189,7 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 | GET /api/sessions/:id         | 續課與讀取紀錄                                 |
 | GET/PUT /api/settings         | 取得/修改教學與語音設定                        |
 
-所有 API Key 只存伺服器環境變數，禁止在瀏覽器 JavaScript 或匯出教材中出現；後端應限制請求大小、頻率與來源。
+所有 API Key（Mistral、Notion）只存伺服器環境變數，禁止在瀏覽器 JavaScript 或匯出教材中出現；後端應限制請求大小、頻率與來源。
 
 # 8. LLM 輸出協定（建議）
 
@@ -191,7 +225,7 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 | NFR-01 | 使用者可在 Windows 11 最新 Chrome / Edge 執行；手機為響應式，語音功能以相容性實測為準。 |
 | NFR-02 | 單輪請求需有明確載入狀態、逾時提示與可重新送出的操作。                                  |
 | NFR-03 | 未授權麥克風或 STT 不支援時，可完整使用文字模式完成課程。                               |
-| NFR-04 | 伺服器不暴露 Mistral API Key，匯入檔案有容量限制及內容消毒。                            |
+| NFR-04 | 伺服器不暴露 Mistral API Key 與 Notion Token；Notion Integration 僅授予讀取權限；同步內容在前端呈現時跳脫。 |
 | NFR-05 | 保留可匯出/刪除課程與學習資料的操作；對第三方服務標示傳輸與保存限制。                   |
 | NFR-06 | 集中記錄非敏感錯誤碼、回應耗時與 Token 用量，避免記錄完整私人逐字稿於應用程式日誌。     |
 
@@ -199,7 +233,7 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 
 | 編號  | 情境                  | 通過條件                                         |
 |-------|-----------------------|--------------------------------------------------|
-| AT-01 | 匯入樣本 Notion HTML  | 保留課程標題與主要段落、字彙，可在課程頁選擇     |
+| AT-01 | 透過 Notion API 同步樣本課程 | 保留課程標題、原始章節名稱與字彙，可在課程頁選擇；重新同步不重複建立課程、不遺失進度 |
 | AT-02 | 老師主動開課          | 從 Warm-up 自動提出首題且播放英文語音            |
 | AT-03 | 英文語音回答          | 結束錄音後出現可修改逐字稿，提交後有貼題追問     |
 | AT-04 | 中文回答              | 得到忠實自然的 A2 英文說法、朗讀、跟讀或跳過選項 |
@@ -211,10 +245,11 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 | AT-10 | LLM 額度用完/斷線     | 顯示明確錯誤、保留原始回答及課程狀態             |
 | AT-11 | TTS 失敗              | 文字內容仍顯示且可繼續上課                       |
 | AT-12 | 完成課程              | 保存章節狀態及課後回饋；重新開啟可查閱           |
+| AT-13 | Notion Token 無效/頁面未分享/Notion 斷線 | 顯示明確錯誤與分享設定指引；已同步的課程仍可正常上課 |
 
 # 12. 開發里程碑與定義
 
-- P0-1 資料層：Notion 匯入、課程列表、課程資料模型、SQLite。
+- P0-1 資料層：Notion API 同步、課程列表、課程資料模型、SQLite。
 
 - P0-2 教學引擎：Mistral Provider Adapter、老師指令、結構化輸出、課程狀態機。
 
@@ -222,9 +257,9 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 
 - P0-4 學習資料：balanced 糾錯、中文求助、課後摘要、保存與續課。
 
-- P0-5 品質驗收：執行 AT-01 至 AT-12，修復後再視為 MVP 完成。
+- P0-5 品質驗收：執行 AT-01 至 AT-13，修復後再視為 MVP 完成。
 
-- P1：跨課程複習、錯誤統計、搜尋及管理。P2：更自然的中英混合 STT、語音品質、自動端點偵測及部署。
+- P1：跨課程複習、錯誤統計、搜尋及管理、檔案匯入備援。P2：更自然的中英混合 STT、語音品質、自動端點偵測及部署。
 
 # 13. 技術風險與待確認事項
 
@@ -238,6 +273,12 @@ Notion 原始章節名稱需保留。例如上傳樣本「A2 基礎會話 c 3/10
 
 - 若要公開部署且多人使用，需加入身份驗證、資源隔離、API 限流與主機成本重新評估。
 
-- 課程 PDF 與外部連結是否可存取不能只依 HTML URL 推定，匯入介面應標示缺失資源。
+- 課程 PDF 與外部連結是否可存取不能只依 URL 推定；Notion 託管檔案連結會過期，同步介面應標示缺失或無法取得的資源。
+
+- Notion API 版本、區塊類型與速率限制可能變動；實作時以官方文件為準，並固定 API 版本。
+
+- Notion 新版 API 將資料庫拆為 database 與 data source，查詢端點依 API 版本不同；實作時以固定的版本為準。
+
+- 待確認：標準答案在頁面中的標示方式（例如放在 toggle 內或特定標題下），解析器需依此規則把 referenceAnswers 與學生可見內容分開。需以實際頁面結構確認後再實作。
 
 文件結束 — 本規格適用於單一使用者、免費優先的 MVP；追加需求需標註 P0/P1/P2 與驗收標準。
