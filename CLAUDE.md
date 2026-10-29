@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-P0-1 (data layer: Notion sync, SQLite, lesson API) and P0-2 (teaching engine: Mistral adapter, section extraction, teacher controller, sessions/turns, settings) are implemented in `server/`. There is no frontend yet. P0-3 (voice UI) is next. From P0-4, `POST /api/sessions/:id/finish` (after-class summary) and resuming a session are not built yet; deferred corrections are already stored as `feedback` rows for that summary. The source of truth for requirements is `docs/SRS.md` (Traditional Chinese); `README.md` summarizes it. Project docs are written in Traditional Chinese (zh-TW), so keep new user-facing docs in that language unless asked otherwise.
+P0-1 (data layer: Notion sync, SQLite, lesson API) and P0-2 (teaching engine: Mistral adapter, section extraction, teacher controller, sessions/turns, settings) are implemented in `server/`. P0-3 (voice UI: React frontend, STT/TTS, voice state machine, text fallback) is implemented in `web/`. P0-4 is next. From P0-4, `POST /api/sessions/:id/finish` (after-class summary) and resuming a session are not built yet; deferred corrections are already stored as `feedback` rows for that summary. The source of truth for requirements is `docs/SRS.md` (Traditional Chinese); `README.md` summarizes it. Project docs are written in Traditional Chinese (zh-TW), so keep new user-facing docs in that language unless asked otherwise.
 
 ## Commands
 
@@ -12,12 +12,16 @@ npm workspaces (Node 22). Run these from the repo root:
 
 ```sh
 npm install
-npm run dev         # API with reload on http://127.0.0.1:3001 (tsx watch)
-npm test            # vitest, all server tests
+npm run dev         # API on :3001 (tsx watch) + web on http://127.0.0.1:5173 (Vite, proxies /api)
+npm test            # vitest: server, then web (jsdom)
 npm run typecheck
-npm run build       # server/dist
+npm run build       # server/dist + web/dist
+npm start           # built API on :3001, also serving web/dist at /
 npx -w server vitest run test/sync.test.ts   # single file; add -t "<name>" for one test
+npx -w web vitest run test/classroom.test.tsx
 ```
+
+Voice features need a real browser and a person (Chrome or Edge on Windows). Headless Chrome has no English TTS voices and no speech recognition, so it exercises only the text fallbacks.
 
 Config comes from the repo-root `.env` (see `.env.example`): `NOTION_TOKEN`, `NOTION_LESSONS_DATABASE_ID`, `MISTRAL_API_KEY`, and optionally `MISTRAL_MODEL`, `PORT` and `DATABASE_PATH` (default `data/tutor.db`, gitignored). Without Notion config the server still starts, sync returns `NOTION_NOT_CONFIGURED`, and already-synced lessons keep working. Without `MISTRAL_API_KEY`, sessions open with a fixed line and turns return `LLM_NOT_CONFIGURED`.
 
@@ -34,6 +38,16 @@ A full first sync of all lessons takes about 2 minutes because of Notion's ~3 re
 - `src/lessons/extract.ts` runs the §6.4 extraction **per lesson on demand** (`POST /api/lessons/:id/extract`), not during sync, so a first sync doesn't spend about 150 LLM calls on lessons that are never taught. Until a section is extracted, the teacher works from `sourceMarkdown`. Warm-up is open small talk: it always uses the fixed `WARM_UP_PROMPTS` ("How was your week?" and so on), and the diary in the notes is stored as `referenceAnswers` for the teacher to use as background, never as quiz questions (the user's decision, 2026-10-29). `tidy()` strips Markdown and drops duplicate prompts.
 - `src/sessions/controller.ts` is the pure teacher controller. It owns progression (`Progress`: section, question index, follow-ups used, pending Chinese-help phrase). The model only proposes `nextAction`, and `decide()` overrides it: it caps follow-ups and forces an advance, only the student can end early, Chinese help costs no follow-up, and balanced correction allows at most one immediate fix and never grades unverified STT. `src/sessions/prompt.ts` builds the teacher prompt. `src/sessions/engine.ts` runs a turn (LLM → controller → one transaction) and post-processes the reply so it matches the decision: at most about 3 sentences with exactly one question, an advance actually asks the next question, sentence help is always "You can say: … Can you try saying that?", a word request gets "It's <word>.", and there is no Markdown for TTS. Live testing showed that `ministral-14b` follows prompt rules only some of the time, so rules that matter are enforced in code. For example, a mixed-Chinese answer without help, or a word request (`wordRequest()`) answered wrongly, gets one `turn-recheck` call, and overlapping corrections are deduped per session. After the reply is composed, `reconcile()` moves Progress forward within the section when the reply clearly asks a later lesson question (content-word similarity), so a student answering ahead doesn't leave the controller one question behind. On an LLM error nothing is saved, so the same `requestId` can be resent.
 - `src/lessons/views.ts` holds the student-facing whitelist projections. `GET /api/lessons/:id/sections/:sectionId` is the deliberate exception: it is the full editing view for FR-02.
+
+## Web layout
+
+React 19 + Vite, with hash routes (`#/`, `#/lessons/:id`, `#/settings`) and no router dependency.
+
+- `src/voice/machine.ts` is the SRS §5 voice state machine as a pure reducer. Every exception state still allows typing and retrying, and none of them drops the draft. A failed answer keeps its `requestId`, so a resend is deduplicated by the server (AT-10). Recording is impossible in `TEACHER_SPEAKING` and `THINKING`.
+- `src/voice/stt.ts` (SpeechRecognition, explicit en-US/zh-TW, manual start/stop), `src/voice/tts.ts` (speechSynthesis, English voice only, Chinese stripped before speaking, sentence chunking, a start watchdog that turns a silent failure into `TTS_UNAVAILABLE`), and `src/voice/mic.ts` (permission plus level meter on the settings page; nothing is recorded). The UI reaches them only through `Deps` (`src/deps.tsx`), so tests inject fakes.
+- `src/classroom/useClassroom.ts` drives a lesson: it runs the one-time extraction, starts the session, and wires the machine to STT, TTS and the API. Submitted text is always reviewed (`verifiedByStudent: true`). "跟著說" records in en-US regardless of the toggle, and "跳過" sends `SKIP_REPEAT_TEXT`. `src/classroom/Classroom.tsx` is the SRS §9 layout: three columns on desktop, tabs plus a fixed control bar under 960px.
+- Lesson links pass through `safeUrl()` (http(s) or `/api/resources/` only). React escapes all Notion text.
+- Effects must use block bodies. Current Chrome's `scrollIntoView` returns a Promise, which an expression-bodied effect hands to React as its cleanup function, crashing the page. `test/classroom.test.tsx` simulates this.
 
 ## What is being built
 

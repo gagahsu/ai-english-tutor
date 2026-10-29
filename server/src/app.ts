@@ -26,9 +26,11 @@ export interface AppDeps {
   notion: { gateway: NotionGateway; databaseId: string } | null;
   /** Null when MISTRAL_API_KEY is missing; lessons open with a fixed line and turns return LLM_NOT_CONFIGURED. */
   llm: LlmProvider | null;
+  /** The built frontend (web/dist) to serve at `/`; omitted in dev, where Vite serves it. */
+  webDir?: string;
 }
 
-export function createApp({ db, notion, llm }: AppDeps) {
+export function createApp({ db, notion, llm, webDir }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "100kb" }));
@@ -138,6 +140,8 @@ export function createApp({ db, notion, llm }: AppDeps) {
   });
 
   app.use("/api", (_req, _res, next) => next(new AppError(404, "NOT_FOUND", "找不到這個 API。")));
+  // The frontend uses hash routes, so only static files need serving.
+  if (webDir) app.use(express.static(webDir));
   app.use(errorHandler);
   return app;
 }

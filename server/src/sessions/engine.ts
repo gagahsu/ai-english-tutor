@@ -244,7 +244,9 @@ function replaceQuestions(reply: string, ask: string): string {
 /** Keeps a reply to about three sentences (SRS §4.2), ending with its last question. */
 export function concise(reply: string): string {
   const all = sentences(reply);
-  if (all.length <= MAX_STATEMENTS + 1) return reply.trim();
+  const questions = all.filter(isQuestion).length;
+  // One core question per turn (SRS §4.2): "Did you like it? What was it about?" keeps the last.
+  if (all.length <= MAX_STATEMENTS + 1 && questions <= 1) return reply.trim();
   const question = all.findLast(isQuestion);
   return question ? replaceQuestions(reply, question) : all.slice(0, MAX_STATEMENTS + 1).join(" ");
 }

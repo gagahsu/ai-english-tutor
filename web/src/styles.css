@@ -1,0 +1,484 @@
+:root {
+  --bg: #f6f5f1;
+  --panel: #ffffff;
+  --text: #1f2328;
+  --muted: #5f6670;
+  --line: #e3e1da;
+  --accent: #2f6fdb;
+  --accent-text: #ffffff;
+  --teacher: #eef3fc;
+  --student: #f1f7ee;
+  --warn-bg: #fff4e5;
+  --warn: #8a4b00;
+  --error: #b42318;
+  --ok: #1d7a3d;
+  --recording: #d92d20;
+  /* Native controls (select, range, scrollbars) follow the theme. */
+  color-scheme: light dark;
+  font-family: system-ui, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a;
+    --panel: #1e2125;
+    --text: #e6e8eb;
+    --muted: #a0a7b0;
+    --line: #33373d;
+    --accent: #6c9cf0;
+    --accent-text: #0d1117;
+    --teacher: #1f2a3a;
+    --student: #1f2d22;
+    --warn-bg: #3a2c16;
+    --warn: #f5c27a;
+    --error: #ff8a80;
+    --ok: #6fd18f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button,
+select,
+textarea,
+input {
+  font: inherit;
+  color: inherit;
+}
+select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+}
+
+button {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
+
+a {
+  color: var(--accent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.error {
+  color: var(--error);
+}
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.notice {
+  background: var(--warn-bg);
+  color: var(--warn);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+}
+
+/* ---------- simple pages ---------- */
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.page-header.stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.page-message {
+  padding: 2rem 1rem;
+  text-align: center;
+}
+.services p {
+  margin: 0.2rem 0;
+}
+.sync {
+  margin: 1rem 0;
+}
+.warnings {
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+.lesson-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.lesson-list a {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+}
+.lesson-list a:hover {
+  border-color: var(--accent);
+}
+.lesson-list a.stale {
+  opacity: 0.6;
+}
+.tag {
+  font-size: 0.8rem;
+  color: var(--warn);
+}
+.settings label,
+.start-card label {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+  max-width: 360px;
+}
+.mic-check,
+.voice-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+.mic-check meter {
+  width: 200px;
+}
+
+/* ---------- classroom ---------- */
+
+.classroom {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.classroom-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.classroom-header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+  flex: 1;
+}
+.status {
+  font-size: 0.9rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--teacher);
+  white-space: nowrap;
+}
+.status[data-status="LISTENING"] {
+  background: var(--recording);
+  color: #fff;
+}
+.status[data-status="MIC_DENIED"],
+.status[data-status="STT_UNSUPPORTED"],
+.status[data-status="STT_NO_MATCH"],
+.status[data-status="NETWORK_ERROR"],
+.status[data-status="LLM_RATE_LIMIT"],
+.status[data-status="TTS_UNAVAILABLE"] {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.tabs {
+  display: none;
+}
+
+.classroom-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 280px;
+  gap: 1rem;
+  padding: 1rem;
+  /* Leave room for the fixed control bar. */
+  padding-bottom: 12rem;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  align-self: start;
+}
+.panel h2 {
+  font-size: 0.95rem;
+  margin: 0.25rem 0 0.5rem;
+  color: var(--muted);
+}
+.sections {
+  padding-left: 1.2rem;
+  margin: 0 0 1rem;
+}
+.sections li[aria-current] {
+  font-weight: 700;
+  color: var(--accent);
+}
+.progress {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.resources,
+.vocab,
+.phrases {
+  padding-left: 1.1rem;
+  margin: 0 0 1rem;
+}
+.vocab li,
+.phrases li {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.35rem;
+}
+.zh {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.privacy {
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.subtitle {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 1;
+  background: var(--teacher);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.subtitle-text {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem;
+}
+.speech-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.rate {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chat-log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+.msg {
+  max-width: 85%;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+}
+.msg p {
+  margin: 0.2rem 0;
+}
+.msg.teacher {
+  background: var(--teacher);
+  justify-self: start;
+}
+.msg.teacher[data-speaking] {
+  outline: 2px solid var(--accent);
+}
+.msg.student {
+  background: var(--student);
+  justify-self: end;
+}
+.msg.pending {
+  opacity: 0.6;
+}
+.assistance {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.6rem;
+  margin: 0.4rem 0;
+}
+.assistance .english {
+  font-weight: 600;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.correction {
+  font-size: 0.9rem;
+}
+.correction .from {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.correction .to {
+  color: var(--ok);
+  font-weight: 600;
+}
+.start-card,
+.done-card {
+  padding: 0.5rem 0;
+}
+
+.control-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 0.4rem;
+  max-width: 900px;
+  margin: 0 auto;
+  box-shadow: 0 -4px 16px rgb(0 0 0 / 0.06);
+}
+.control-bar .error {
+  margin: 0;
+}
+.lang {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 0.25rem;
+}
+.mic {
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 0.55rem 1.2rem;
+  margin-left: auto;
+}
+.mic.recording {
+  background: var(--recording);
+  color: #fff;
+  border-color: var(--recording);
+}
+.interim {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
+.answer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+.answer label {
+  grid-column: 1 / -1;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.answer textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background: var(--bg);
+}
+
+/* Mobile: one column with tabs; the record button stays in the fixed bar (SRS §9). */
+@media (max-width: 960px) {
+  .tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem 1rem 0;
+  }
+  .tabs button {
+    flex: 1;
+  }
+  .classroom-grid {
+    grid-template-columns: 1fr;
+    padding: 0.75rem;
+    padding-bottom: 13rem;
+  }
+  .classroom-grid > .panel {
+    display: none;
+  }
+  .classroom-grid[data-tab="material"] > .sections-panel,
+  .classroom-grid[data-tab="chat"] > .chat-panel,
+  .classroom-grid[data-tab="notes"] > .notes-panel {
+    display: block;
+  }
+  .classroom-header .back {
+    font-size: 0.9rem;
+  }
+  .msg {
+    max-width: 100%;
+  }
+}

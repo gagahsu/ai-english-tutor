@@ -259,6 +259,7 @@ describe("reply length", () => {
       "Yes! A stopover is a short stay. What is a suitcase?",
     );
     expect(concise("Good. Why?")).toBe("Good. Why?");
+    expect(concise("That sounds fun! Did you like the movie? What was it about?")).toBe("That sounds fun! What was it about?");
   });
 
   it("opens with a greeting and only the lesson question", () => {

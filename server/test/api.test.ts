@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
@@ -104,5 +107,15 @@ describe("without Notion configured", () => {
     expect(sync.body.error.code).toBe("NOTION_NOT_CONFIGURED");
 
     await request(app).get("/api/lessons").expect(200);
+  });
+});
+
+describe("frontend", () => {
+  it("serves the built web app next to the API", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "web-"));
+    fs.writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>t</title>");
+    app = createApp({ db, notion: null, llm: null, webDir: dir });
+    expect((await request(app).get("/").expect(200)).text).toContain("<title>t</title>");
+    expect((await request(app).get("/api/missing").expect(404)).body.error.code).toBe("NOT_FOUND");
   });
 });
