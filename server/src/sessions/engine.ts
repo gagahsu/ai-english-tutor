@@ -21,13 +21,16 @@ import {
   findExchange,
   getSession,
   listFeedback,
+  listSessions,
   listTurns,
   saveExchange,
+  saveSummary,
   type NewStudentTurn,
   type NewTeacherTurn,
 } from "./repository.js";
+import { buildSummary } from "./summary.js";
 import { teacherOutputSchema, type TeacherOutput, type TurnInput } from "./types.js";
-import { toProgressView, toSessionView, toTurnView } from "./views.js";
+import { toProgressView, toSessionListItem, toSessionView, toTurnView } from "./views.js";
 
 const TURN_REQUEST = { maxTokens: 800, temperature: 0.5 };
 
@@ -260,6 +263,63 @@ function degradedReply(raw: string, plan: TurnPlan): string {
   const prose = raw.trim();
   if (prose && prose.length <= 600 && !/^[{[`]/.test(prose)) return prose;
   return `Sorry, I didn't catch that. ${plan.current.question ?? "Could you say it again?"}`;
+}
+
+/**
+ * Ends the lesson and writes the after-class summary (FR-11). Finishing again returns the same
+ * summary, except that a fallback summary (LLM unavailable at the time) is regenerated.
+ */
+export async function finishSession(db: Db, llm: LlmProvider | null, sessionId: string, now = () => new Date()) {
+  const session = getSession(db, sessionId);
+  if (!session) throw sessionNotFound();
+  if (session.summary && !(session.summary.degraded && llm)) return sessionView(db, sessionId);
+  if (busy.has(sessionId)) throw new AppError(409, "TURN_IN_PROGRESS", "老師還在回覆上一個回答，請稍候再結束。");
+  busy.add(sessionId);
+  try {
+    const summary = await buildSummary(llm, {
+      lesson: getLesson(db, session.lessonId)!,
+      session,
+      turns: listTurns(db, sessionId),
+      feedback: listFeedback(db, sessionId),
+      now: now().toISOString(),
+    });
+    // Keep a good summary rather than replacing it with another fallback.
+    if (!(summary.degraded && session.summary)) saveSummary(db, sessionId, summary, now().toISOString());
+  } finally {
+    busy.delete(sessionId);
+  }
+  return sessionView(db, sessionId);
+}
+
+/** History for one lesson (or all), newest first, for resuming and reviewing (AT-12). */
+export function sessionList(db: Db, lessonId?: string) {
+  const titles = new Map<string, Lesson | null>();
+  const lessonOf = (id: string) => {
+    if (!titles.has(id)) titles.set(id, getLesson(db, id));
+    return titles.get(id)!;
+  };
+  return listSessions(db, lessonId).flatMap(({ session, answers }) => {
+    const lesson = lessonOf(session.lessonId);
+    return lesson ? [toSessionListItem(session, lesson, answers)] : [];
+  });
+}
+
+/** Everything the student has stored, for download (NFR-05). Includes deferred feedback. */
+export function exportLearningData(db: Db) {
+  return {
+    exportedAt: new Date().toISOString(),
+    settings: getSettings(db),
+    sessions: listSessions(db).map(({ session }) => ({
+      ...sessionView(db, session.id),
+      feedback: listFeedback(db, session.id).map((f) => ({
+        type: f.type,
+        original: f.original,
+        suggestion: f.suggestion,
+        reasonZh: f.reasonZh,
+        deferred: f.deferred,
+      })),
+    })),
+  };
 }
 
 export function sessionView(db: Db, sessionId: string) {

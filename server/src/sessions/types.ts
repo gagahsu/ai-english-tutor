@@ -90,7 +90,30 @@ export interface Session {
   settings: Settings;
   startedAt: string;
   endedAt: string | null;
+  summary: SessionSummary | null;
 }
+
+/**
+ * After-class review (FR-11). Corrections, phrases and vocabulary come straight from stored
+ * data; only the overview, the more natural phrasings and the next steps are written by the LLM.
+ */
+export interface SessionSummary {
+  generatedAt: string;
+  /** True when the LLM was unavailable and the text parts are a fixed fallback. */
+  degraded: boolean;
+  overviewZh: string;
+  sectionsCovered: { id: string; title: string }[];
+  stats: { answers: number; chineseHelp: number; corrections: number };
+  corrections: { type: string; original: string; suggestion: string; reasonZh: string | null }[];
+  naturalExpressions: { original: string; better: string; noteZh?: string }[];
+  /** English the teacher offered during Chinese help. */
+  phrases: { english: string; zhExplanation?: string }[];
+  vocabulary: { term: string; meaningZh?: string }[];
+  nextSteps: string[];
+}
+
+/** What the web client sends when the student skips repeating an offered sentence (web SKIP_REPEAT_TEXT). */
+export const SKIP_REPEAT_PREFIX = "Skip repeating";
 
 export interface TeacherMeta {
   intent: Intent | null;

@@ -90,6 +90,11 @@ const migrations: string[] = [
   );
   CREATE INDEX feedback_turn ON feedback (turn_id);
   `,
+  `
+  -- After-class summary (FR-11), JSON; null until the session is finished.
+  ALTER TABLE sessions ADD COLUMN summary TEXT;
+  CREATE INDEX sessions_lesson ON sessions (lesson_id, started_at);
+  `,
 ];
 
 export function openDatabase(file: string): Db {

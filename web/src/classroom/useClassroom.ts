@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { ApiError, type Lesson, type Session, type Settings, type SttLanguage, type TeacherTurn } from "../api";
+import { ApiError, type Lesson, type Session, type SessionListItem, type Settings, type SttLanguage, type TeacherTurn } from "../api";
 import { useDeps } from "../deps";
 import { canListen, initialVoiceState, voiceReducer } from "../voice/machine";
 import type { SttRecording } from "../voice/stt";
 import { TtsError } from "../voice/tts";
 
-export type Phase = "loading" | "preparing" | "ready" | "starting" | "active" | "completed" | "error";
+export type Phase =
+  | "loading"
+  | "preparing"
+  | "ready"
+  | "starting"
+  | "active"
+  /** The teacher ran out of questions or the student asked to stop; the summary is being made. */
+  | "completed"
+  | "finishing"
+  | "finished"
+  | "error";
 
 /** Sent when the student chooses not to repeat the offered sentence (SRS §4.4: repeating is skippable). */
 export const SKIP_REPEAT_TEXT = "Skip repeating, please. Let's go back to the question.";
@@ -20,6 +30,7 @@ export function useClassroom(lessonId: string) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [history, setHistory] = useState<SessionListItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
@@ -33,16 +44,27 @@ export function useClassroom(lessonId: string) {
   const speechToken = useRef(0);
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const finishingRef = useRef(false);
 
   // Load the lesson, and run the one-time section extraction first if it has not happened yet.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [loaded, loadedSettings, llm] = await Promise.all([api.getLesson(lessonId), api.getSettings(), api.llmStatus()]);
+        const [loaded, loadedSettings, llm, past] = await Promise.all([
+          api.getLesson(lessonId),
+          api.getSettings(),
+          api.llmStatus(),
+          api.listSessions(lessonId).catch(() => []),
+        ]);
         if (cancelled) return;
         setSettings(loadedSettings);
         setLesson(loaded);
+        setHistory(past);
         const needsExtraction = loaded.sections.some((s) => s.extractionStatus === "pending" || s.extractionStatus === "failed");
         if (needsExtraction && llm.configured) {
           setPhase("preparing");
@@ -116,24 +138,67 @@ export function useClassroom(lessonId: string) {
     setPaused(false);
   }, [tts]);
 
-  const start = useCallback(
-    async (sectionId?: string) => {
+  /** Enters a new or resumed session; the teacher (re)reads her last line, i.e. the open question. */
+  const enter = useCallback(
+    async (load: () => Promise<Session>, failure: string) => {
       setPhase("starting");
       setNotice(null);
       try {
-        const started = await api.startSession(lessonId, sectionId);
-        setSession(started);
-        setPhase(started.state === "active" ? "active" : "completed");
-        const opening = started.turns.findLast((t): t is TeacherTurn => t.role === "teacher");
-        dispatch({ type: "LESSON_STARTED", speak: !!opening && tts.supported });
-        if (opening && tts.supported) speak(opening.text, opening.id);
+        const loaded = await load();
+        setSession(loaded);
+        if (loaded.summary) {
+          setPhase("finished");
+          dispatch({ type: "LESSON_ENDED" });
+          return;
+        }
+        setPhase(loaded.state === "active" ? "active" : "completed");
+        const last = loaded.turns.findLast((t): t is TeacherTurn => t.role === "teacher");
+        dispatch({ type: "LESSON_STARTED", speak: !!last && tts.supported });
+        if (last && tts.supported) speak(last.text, last.id);
         else if (!tts.supported) dispatch({ type: "TTS_FAILED", message: "這個瀏覽器不支援語音朗讀，老師的話會以文字顯示。" });
       } catch (err) {
-        setNotice(err instanceof ApiError ? err.message : "無法開始上課。");
+        setNotice(err instanceof ApiError ? err.message : failure);
         setPhase("ready");
       }
     },
-    [api, lessonId, speak, tts.supported],
+    [speak, tts.supported],
+  );
+
+  const start = useCallback(
+    (sectionId?: string) => enter(() => api.startSession(lessonId, sectionId), "無法開始上課。"),
+    [api, enter, lessonId],
+  );
+
+  /** Continues an unfinished session where it stopped (FR-10). */
+  const resume = useCallback((sessionId: string) => enter(() => api.getSession(sessionId), "無法載入上次的課。"), [api, enter]);
+
+  /**
+   * Ends the lesson and shows the after-class summary (FR-11). Called by the student, or
+   * automatically once the lesson is complete; that one lets the teacher finish her goodbye.
+   */
+  const finish = useCallback(
+    async ({ stopSpeech = true }: { stopSpeech?: boolean } = {}) => {
+      const current = sessionRef.current;
+      // A ref, not state: two calls in the same render (e.g. StrictMode effects) must not both run.
+      if (!current || finishingRef.current) return;
+      finishingRef.current = true;
+      const before = phaseRef.current;
+      if (stopSpeech) silence();
+      recording.current?.abort();
+      setPhase("finishing");
+      try {
+        const finished = await api.finishSession(current.id);
+        setSession(finished);
+        setPhase("finished");
+        if (stopSpeech) dispatch({ type: "LESSON_ENDED" });
+      } catch (err) {
+        setNotice(`${err instanceof ApiError ? err.message : "無法產生課後摘要。"}可以稍後再按一次。`);
+        setPhase(before === "finished" ? "finished" : before === "finishing" ? "completed" : before);
+      } finally {
+        finishingRef.current = false;
+      }
+    },
+    [api, silence],
   );
 
   const replay = useCallback(
@@ -229,10 +294,20 @@ export function useClassroom(lessonId: string) {
     [api],
   );
 
+  // When the lesson completes on its own, produce the summary right away, once; if that fails
+  // the student retries with the button instead of this effect looping.
+  const autoFinished = useRef<string | null>(null);
+  useEffect(() => {
+    if (phase !== "completed" || !session || session.summary || autoFinished.current === session.id) return;
+    autoFinished.current = session.id;
+    void finish({ stopSpeech: false });
+  }, [phase, session, finish]);
+
   return {
     phase,
     lesson,
     session,
+    history,
     settings,
     notice,
     voice,
@@ -244,6 +319,8 @@ export function useClassroom(lessonId: string) {
     sttSupported: stt.supported,
     ttsSupported: tts.supported,
     start,
+    resume,
+    finish: () => finish(),
     replay,
     stopSpeaking,
     togglePause,

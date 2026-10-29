@@ -52,5 +52,19 @@ export function toSessionView(session: Session, lesson: Lesson, turns: TurnRecor
     startedAt: session.startedAt,
     endedAt: session.endedAt,
     turns: turns.map((t) => toTurnView(t, feedback)),
+    // The summary is the student's own review, deferred corrections included.
+    summary: session.summary,
+  };
+}
+
+export function toSessionListItem(session: Session, lesson: Lesson, answers: number) {
+  return {
+    ...toProgressView(session, lesson),
+    lessonId: lesson.id,
+    lessonTitle: lesson.title,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    answers,
+    hasSummary: !!session.summary,
   };
 }

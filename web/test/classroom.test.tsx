@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api as realApi, type Exchange, type Lesson, type Session, type Settings, type TeacherTurn } from "../src/api";
+import { ApiError, api as realApi, type Exchange, type Lesson, type Session, type SessionSummary, type Settings, type TeacherTurn } from "../src/api";
 import { Classroom } from "../src/classroom/Classroom";
 import { SKIP_REPEAT_TEXT } from "../src/classroom/useClassroom";
 import { DepsProvider, type Deps } from "../src/deps";
@@ -27,7 +27,10 @@ class FakeTts implements TtsEngine {
   }
   pause() {}
   resume() {}
+  /** The utterance that was playing at each cancel. */
+  interrupted: (string | undefined)[] = [];
   cancel() {
+    this.interrupted.push(this.spoken.at(-1));
     this.current?.resolve();
   }
   async voices() {
@@ -105,6 +108,20 @@ const session: Session = {
   startedAt: "",
   endedAt: null,
   turns: [teacher("t0", "Hello! How was your week?")],
+  summary: null,
+};
+
+const summary: SessionSummary = {
+  generatedAt: "2026-10-30T00:00:00Z",
+  degraded: false,
+  overviewZh: "你這次很努力地分享了一週的生活。",
+  sectionsCovered: [{ id: "wu", title: "Warm-up" }],
+  stats: { answers: 3, chineseHelp: 1, corrections: 1 },
+  corrections: [{ type: "grammar", original: "I go to work", suggestion: "I went to work", reasonZh: "過去式" }],
+  naturalExpressions: [{ original: "I watched the TV", better: "I watched TV" }],
+  phrases: [{ english: "I stayed home.", zhExplanation: "待在家" }],
+  vocabulary: [{ term: "busy", meaningZh: "忙碌" }],
+  nextSteps: ["下次從「Short Talk」繼續這堂課。"],
 };
 
 function exchange(text: string, reply: TeacherTurn, state: Session["state"] = "active"): Exchange {
@@ -134,6 +151,8 @@ beforeEach(() => {
     extractLesson: vi.fn(async () => ({})),
     updateSettings: vi.fn(async (patch: Partial<Settings>) => ({ ...settings, ...patch })),
     startSession: vi.fn(async () => structuredClone(session)),
+    listSessions: vi.fn(async () => []),
+    finishSession: vi.fn(),
     submitTurn: vi.fn(),
   };
 });
@@ -289,14 +308,75 @@ describe("classroom", () => {
     expect(vi.mocked(api.submitTurn).mock.lastCall![1]).toMatchObject({ text: SKIP_REPEAT_TEXT, inputLanguage: "en-US" });
   });
 
-  it("finishes the lesson and hides the answer box", async () => {
+  it("produces the summary by itself when the lesson completes, without cutting off the goodbye (FR-11)", async () => {
     const user = await openClass();
     await tts.finish();
     vi.mocked(api.submitTurn).mockResolvedValue(exchange("Bye", teacher("t1", "Goodbye!"), "completed"));
+    vi.mocked(api.finishSession).mockResolvedValue({ ...session, state: "finished", summary });
     await user.type(screen.getByRole("textbox"), "Bye");
     await user.click(screen.getByRole("button", { name: "送出" }));
-    await screen.findByText("這堂課完成了！");
+
+    await screen.findByRole("region", { name: "課後摘要" });
+    expect(api.finishSession).toHaveBeenCalledTimes(1);
+    expect(tts.spoken.at(-1)).toBe("Goodbye!");
+    expect(tts.interrupted).not.toContain("Goodbye!");
     expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText("I went to work").className).toBe("to");
+    expect(screen.getByText("I watched TV")).toBeTruthy();
+    expect(screen.getByText("下次從「Short Talk」繼續這堂課。")).toBeTruthy();
+  });
+
+  it("lets the student end the lesson early and see the summary", async () => {
+    const user = await openClass();
+    vi.mocked(api.finishSession).mockResolvedValue({ ...session, state: "finished", summary });
+    await user.click(screen.getByRole("button", { name: "結束課程" }));
+    await screen.findByRole("region", { name: "課後摘要" });
+    expect(status()).toBe("課程結束");
+    expect(screen.queryByRole("button", { name: "結束課程" })).toBeNull();
+  });
+
+  it("offers a retry instead of looping when the summary fails", async () => {
+    const user = await openClass();
+    await tts.finish();
+    vi.mocked(api.submitTurn).mockResolvedValue(exchange("Bye", teacher("t1", "Goodbye!"), "completed"));
+    vi.mocked(api.finishSession)
+      .mockRejectedValueOnce(new ApiError("NETWORK_ERROR", "無法連線到伺服器。"))
+      .mockResolvedValueOnce({ ...session, state: "finished", summary: { ...summary, degraded: true } })
+      .mockResolvedValueOnce({ ...session, state: "finished", summary });
+    await user.type(screen.getByRole("textbox"), "Bye");
+    await user.click(screen.getByRole("button", { name: "送出" }));
+
+    await user.click(await screen.findByRole("button", { name: "產生課後摘要" }));
+    expect(await screen.findByText(/AI 老師當時無法產生完整回顧/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "重新產生" }));
+    await waitFor(() => expect(screen.queryByText(/AI 老師當時無法產生完整回顧/)).toBeNull());
+    expect(api.finishSession).toHaveBeenCalledTimes(3);
+  });
+
+  it("continues an unfinished session where it stopped (FR-10, AT-12)", async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([
+      { id: "old", state: "active", sectionId: "wu", sectionTitle: "Warm-up", questionIndex: 1, lessonId: "l1", lessonTitle: lesson.title, startedAt: "2026-10-29T10:00:00Z", endedAt: null, answers: 4, hasSummary: false },
+      { id: "done", state: "finished", sectionId: null, sectionTitle: null, questionIndex: 0, lessonId: "l1", lessonTitle: lesson.title, startedAt: "2026-10-28T10:00:00Z", endedAt: "2026-10-28T10:30:00Z", answers: 9, hasSummary: true },
+    ]);
+    vi.spyOn(api, "getSession").mockResolvedValue({
+      ...session,
+      id: "old",
+      turns: [teacher("t0", "Hello!"), teacher("t9", "What did you do last weekend?")],
+    });
+    render(
+      <DepsProvider deps={{ api, stt, tts }}>
+        <Classroom lessonId="l1" />
+      </DepsProvider>,
+    );
+    const user = userEvent.setup();
+    expect((await screen.findByText(/已回答 4 次/)).textContent).toContain("目前在「Warm-up」");
+    expect(screen.getByRole("link", { name: /10\/28/ }).getAttribute("href")).toBe("#/sessions/done");
+
+    await user.click(screen.getByRole("button", { name: "繼續上課" }));
+    await screen.findByText("What did you do last weekend?", { selector: ".subtitle-text" });
+    expect(api.getSession).toHaveBeenCalledWith("old");
+    expect(api.startSession).not.toHaveBeenCalled();
+    expect(tts.spoken).toEqual(["What did you do last weekend?"]);
   });
 
   it("extracts lesson material before the first class", async () => {

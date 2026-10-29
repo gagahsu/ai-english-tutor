@@ -95,6 +95,29 @@ export interface Session extends SessionProgress {
   startedAt: string;
   endedAt: string | null;
   turns: Turn[];
+  summary: SessionSummary | null;
+}
+
+export interface SessionSummary {
+  generatedAt: string;
+  degraded: boolean;
+  overviewZh: string;
+  sectionsCovered: { id: string; title: string }[];
+  stats: { answers: number; chineseHelp: number; corrections: number };
+  corrections: Correction[];
+  naturalExpressions: { original: string; better: string; noteZh?: string }[];
+  phrases: Assistance[];
+  vocabulary: { term: string; meaningZh?: string }[];
+  nextSteps: string[];
+}
+
+export interface SessionListItem extends SessionProgress {
+  lessonId: string;
+  lessonTitle: string;
+  startedAt: string;
+  endedAt: string | null;
+  answers: number;
+  hasSummary: boolean;
 }
 
 export interface Exchange {
@@ -144,7 +167,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
     }
     throw new ApiError("NETWORK_ERROR", "無法連線到伺服器，請確認網站後端有在執行後再試。");
   }
-  const data = await res.json().catch(() => null);
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const error = (data as { error?: { code?: string; message?: string } } | null)?.error;
     throw new ApiError(error?.code ?? "HTTP_ERROR", error?.message ?? `伺服器錯誤（${res.status}）`, res.status);
@@ -163,6 +186,14 @@ export const api = {
   updateSettings: (patch: Partial<Settings>) => request<Settings>("PUT", "/api/settings", patch),
   startSession: (lessonId: string, sectionId?: string) => request<Session>("POST", "/api/sessions", { lessonId, sectionId }),
   getSession: (id: string) => request<Session>("GET", `/api/sessions/${encodeURIComponent(id)}`),
+  listSessions: (lessonId?: string) =>
+    request<{ sessions: SessionListItem[] }>("GET", `/api/sessions${lessonId ? `?lessonId=${encodeURIComponent(lessonId)}` : ""}`).then(
+      (r) => r.sessions,
+    ),
+  // Summaries can take a while (one LLM call), so no short timeout here.
+  finishSession: (id: string) => request<Session>("POST", `/api/sessions/${encodeURIComponent(id)}/finish`),
+  deleteSession: (id: string) => request<null>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),
+  deleteAllSessions: () => request<{ deleted: number }>("DELETE", "/api/sessions?confirm=all"),
   submitTurn: (
     sessionId: string,
     turn: { requestId: string; text: string; inputLanguage: SttLanguage; verifiedByStudent: boolean },

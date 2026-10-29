@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db.js";
 import type { Settings } from "../settings.js";
-import type { Correction, FeedbackRecord, Progress, Session, SessionState, TeacherMeta, TurnRecord } from "./types.js";
+import type {
+  Correction,
+  FeedbackRecord,
+  Progress,
+  Session,
+  SessionState,
+  SessionSummary,
+  TeacherMeta,
+  TurnRecord,
+} from "./types.js";
 
 interface SessionRowDb {
   id: string;
@@ -11,6 +20,7 @@ interface SessionRowDb {
   settings_snapshot: string;
   started_at: string;
   ended_at: string | null;
+  summary: string | null;
 }
 
 interface TurnRowDb {
@@ -48,6 +58,7 @@ const toSession = (r: SessionRowDb): Session => ({
   settings: JSON.parse(r.settings_snapshot),
   startedAt: r.started_at,
   endedAt: r.ended_at,
+  summary: r.summary ? JSON.parse(r.summary) : null,
 });
 
 const toTurn = (r: TurnRowDb): TurnRecord => ({
@@ -79,6 +90,46 @@ const toFeedback = (r: FeedbackRowDb): FeedbackRecord => ({
 export function getSession(db: Db, id: string): Session | null {
   const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRowDb | undefined;
   return row ? toSession(row) : null;
+}
+
+export interface SessionListItem {
+  session: Session;
+  answers: number;
+}
+
+/** Newest first; optionally for one lesson. */
+export function listSessions(db: Db, lessonId?: string): SessionListItem[] {
+  const rows = db
+    .prepare(
+      `SELECT s.*, (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.role = 'student') AS answers
+       FROM sessions s ${lessonId ? "WHERE s.lesson_id = ?" : ""}
+       ORDER BY s.started_at DESC, s.rowid DESC`,
+    )
+    .all(...(lessonId ? [lessonId] : [])) as (SessionRowDb & { answers: number })[];
+  return rows.map((r) => ({ session: toSession(r), answers: r.answers }));
+}
+
+/** Stores the after-class summary and closes the session (FR-11). */
+export function saveSummary(db: Db, sessionId: string, summary: SessionSummary, now: string): void {
+  db.prepare(
+    `UPDATE sessions SET summary = ?, state = 'finished', ended_at = COALESCE(ended_at, ?) WHERE id = ?`,
+  ).run(JSON.stringify(summary), now, sessionId);
+}
+
+/** Deletes sessions with their turns and feedback (NFR-05). Returns how many were removed. */
+export function deleteSessions(db: Db, sessionId?: string): number {
+  return db.transaction(() => {
+    const ids = sessionId
+      ? [sessionId]
+      : (db.prepare("SELECT id FROM sessions").all() as { id: string }[]).map((r) => r.id);
+    let removed = 0;
+    for (const id of ids) {
+      // Teacher turns reference student turns (in_reply_to), so clear those links first.
+      db.prepare("UPDATE turns SET in_reply_to = NULL WHERE session_id = ?").run(id);
+      removed += db.prepare("DELETE FROM sessions WHERE id = ?").run(id).changes;
+    }
+    return removed;
+  })();
 }
 
 export function listTurns(db: Db, sessionId: string): TurnRecord[] {

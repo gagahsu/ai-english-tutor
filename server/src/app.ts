@@ -16,7 +16,8 @@ import { sectionContentSchema } from "./lessons/types.js";
 import { toStudentLesson, toStudentLessonSummary } from "./lessons/views.js";
 import type { LlmProvider } from "./llm/provider.js";
 import type { NotionGateway } from "./notion/gateway.js";
-import { sessionView, startSession, submitTurn } from "./sessions/engine.js";
+import { exportLearningData, finishSession, sessionList, sessionView, startSession, submitTurn } from "./sessions/engine.js";
+import { deleteSessions } from "./sessions/repository.js";
 import { createSessionSchema, turnInputSchema } from "./sessions/types.js";
 import { getSettings, settingsPatchSchema, updateSettings } from "./settings.js";
 
@@ -127,6 +128,32 @@ export function createApp({ db, notion, llm, webDir }: AppDeps) {
 
   app.post("/api/sessions/:id/turns", async (req, res) => {
     res.json(await submitTurn(db, llm, req.params.id, turnInputSchema.parse(req.body)));
+  });
+
+  app.post("/api/sessions/:id/finish", async (req, res) => {
+    res.json(await finishSession(db, llm, req.params.id));
+  });
+
+  app.get("/api/sessions", (req, res) => {
+    const lessonId = typeof req.query.lessonId === "string" ? req.query.lessonId : undefined;
+    res.json({ sessions: sessionList(db, lessonId) });
+  });
+
+  // Learning data stays under the student's control (NFR-05).
+  app.delete("/api/sessions/:id", (req, res) => {
+    if (!deleteSessions(db, req.params.id)) throw new AppError(404, "SESSION_NOT_FOUND", "找不到這堂課的上課紀錄。");
+    res.status(204).end();
+  });
+
+  app.delete("/api/sessions", (req, res) => {
+    // Guard against an accidental bare DELETE wiping everything.
+    if (req.query.confirm !== "all") throw new AppError(400, "CONFIRM_REQUIRED", "刪除全部紀錄需要加上 confirm=all。");
+    res.json({ deleted: deleteSessions(db) });
+  });
+
+  app.get("/api/export", (_req, res) => {
+    const date = new Date().toISOString().slice(0, 10);
+    res.attachment(`ai-english-tutor-${date}.json`).json(exportLearningData(db));
   });
 
   // Notion-hosted file URLs expire, so files are resolved on demand.

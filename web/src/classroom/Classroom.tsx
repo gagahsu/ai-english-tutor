@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LessonSection, StudentTurn, TeacherTurn } from "../api";
+import { SummaryView } from "../components/SummaryView";
 import { safeUrl } from "../safeUrl";
 import { canListen, canSubmit, canType, type VoiceStatus } from "../voice/machine";
 import { useClassroom, type Classroom as ClassroomState } from "./useClassroom";
@@ -50,6 +51,11 @@ export function Classroom({ lessonId }: { lessonId: string }) {
         </a>
         <h1>{c.lesson.title}</h1>
         <StatusBadge c={c} />
+        {c.phase === "active" && (
+          <button type="button" onClick={c.finish} disabled={c.voice.status === "THINKING" || c.voice.status === "LISTENING"}>
+            結束課程
+          </button>
+        )}
       </header>
 
       <nav className="tabs" aria-label="切換區塊">
@@ -78,14 +84,15 @@ export function Classroom({ lessonId }: { lessonId: string }) {
         </section>
         <NotesPanel c={c} />
       </div>
-      {(c.phase === "active" || c.phase === "completed") && <ControlBar c={c} />}
+      {c.phase === "active" && <ControlBar c={c} />}
     </div>
   );
 }
 
 function StatusBadge({ c }: { c: ClassroomState }) {
   const { status } = c.voice;
-  const label = c.phase === "completed" && !ERROR_STATES.has(status) && status !== "TEACHER_SPEAKING" ? "課程完成" : STATUS_TEXT[status];
+  const ended = c.phase === "completed" || c.phase === "finishing" || c.phase === "finished";
+  const label = ended && status !== "TEACHER_SPEAKING" ? "課程結束" : STATUS_TEXT[status];
   const text = status === "LISTENING" && c.stopping ? "正在辨識…" : label;
   return (
     <span className="status" data-status={status} aria-live="polite">
@@ -97,9 +104,24 @@ function StatusBadge({ c }: { c: ClassroomState }) {
 function StartCard({ c }: { c: ClassroomState }) {
   const sections = c.lesson!.sections.filter((s) => s.kind !== "learning-materials");
   const [sectionId, setSectionId] = useState(sections.find((s) => s.kind === "warm-up")?.id ?? sections[0]?.id ?? "");
+  // The most recent unfinished session with at least one answer can be continued (FR-10).
+  const unfinished = c.history.find((h) => h.state === "active" && h.answers > 0);
+  const past = c.history.filter((h) => h.state !== "active" || h.answers > 0);
   return (
     <div className="start-card">
-      <h2>準備上課</h2>
+      {unfinished && (
+        <div className="resume">
+          <h2>繼續上次的課</h2>
+          <p>
+            {formatDate(unfinished.startedAt)}・已回答 {unfinished.answers} 次
+            {unfinished.sectionTitle && <>・目前在「{unfinished.sectionTitle}」</>}
+          </p>
+          <button type="button" className="primary" disabled={c.phase === "starting"} onClick={() => c.resume(unfinished.id)}>
+            {c.phase === "starting" ? "載入中…" : "繼續上課"}
+          </button>
+        </div>
+      )}
+      <h2>{unfinished ? "或重新開始" : "準備上課"}</h2>
       <p>老師會用英文帶你一題一題練習。播完老師的話後，按麥克風回答，確認辨識結果再送出；也可以直接打字。</p>
       <label>
         從哪個章節開始
@@ -113,12 +135,35 @@ function StartCard({ c }: { c: ClassroomState }) {
       </label>
       {!c.sttSupported && <p className="hint">這個瀏覽器不支援語音辨識，這堂課會用打字作答。</p>}
       {!c.ttsSupported && <p className="hint">這個瀏覽器不支援語音朗讀，老師的話會以文字顯示。</p>}
-      <button type="button" className="primary" disabled={c.phase === "starting" || !sectionId} onClick={() => c.start(sectionId)}>
-        {c.phase === "starting" ? "老師準備中…" : "開始上課"}
+      <button
+        type="button"
+        className={unfinished ? undefined : "primary"}
+        disabled={c.phase === "starting" || !sectionId}
+        onClick={() => c.start(sectionId)}
+      >
+        {c.phase === "starting" ? "老師準備中…" : unfinished ? "開始新的一堂" : "開始上課"}
       </button>
+      {past.length > 0 && (
+        <>
+          <h2>上課紀錄</h2>
+          <ul className="history">
+            {past.map((h) => (
+              <li key={h.id}>
+                <a href={`#/sessions/${encodeURIComponent(h.id)}`}>{formatDate(h.startedAt)}</a>
+                <span className="hint">
+                  回答 {h.answers} 次・{h.hasSummary ? "有課後摘要" : h.state === "active" ? "未結束" : "未產生摘要"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
+
+export const formatDate = (iso: string) =>
+  new Date(iso).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function Conversation({ c }: { c: ClassroomState }) {
   const turns = c.session?.turns ?? [];
@@ -129,6 +174,11 @@ function Conversation({ c }: { c: ClassroomState }) {
   useEffect(() => {
     logEnd.current?.scrollIntoView?.({ block: "end" });
   }, [turns.length]);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const summary = c.session?.summary;
+  useEffect(() => {
+    if (summary) summaryRef.current?.scrollIntoView?.({ block: "start" });
+  }, [summary]);
 
   return (
     <>
@@ -170,14 +220,25 @@ function Conversation({ c }: { c: ClassroomState }) {
           </li>
         )}
       </ol>
-      {c.phase === "completed" && (
+      <div ref={logEnd} />
+      {(c.phase === "completed" || c.phase === "finishing") && (
         <div className="done-card" role="status">
-          <h2>這堂課完成了！</h2>
-          <p>對話紀錄已保存。課後摘要（字彙、修正、更自然的說法）會在下一版加入。</p>
+          <h2>這堂課結束了！</h2>
+          {c.phase === "finishing" ? (
+            <p>正在整理課後摘要…</p>
+          ) : (
+            <button type="button" className="primary" onClick={c.finish}>
+              產生課後摘要
+            </button>
+          )}
+        </div>
+      )}
+      {summary && (
+        <div ref={summaryRef} className="done-card">
+          <SummaryView summary={summary} onRetry={c.finish} retrying={c.phase === "finishing"} />
           <a href="#/">回課程列表</a>
         </div>
       )}
-      <div ref={logEnd} />
     </>
   );
 }

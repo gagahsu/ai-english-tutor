@@ -81,6 +81,8 @@ export function SettingsPage() {
         <VoiceCheck rate={settings?.speechRate ?? 1} supported={tts.supported} />
       </section>
 
+      <LearningData />
+
       <section className="privacy">
         <h2>隱私與資料傳輸</h2>
         <ul>
@@ -91,6 +93,51 @@ export function SettingsPage() {
         </ul>
       </section>
     </main>
+  );
+}
+
+function LearningData() {
+  const { api } = useDeps();
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function deleteAll() {
+    try {
+      const { deleted } = await api.deleteAllSessions();
+      setMessage(`已刪除 ${deleted} 次上課紀錄。`);
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "刪除失敗。");
+    }
+    setConfirming(false);
+  }
+
+  return (
+    <section className="data">
+      <h2>學習資料</h2>
+      <p>上課紀錄、糾錯與課後摘要只存在這台電腦的資料庫裡。</p>
+      <div className="row">
+        <a className="button" href="/api/export" download>
+          匯出全部紀錄（JSON）
+        </a>
+        {confirming ? (
+          <>
+            <span>確定刪除全部上課紀錄？無法復原。</span>
+            <button type="button" onClick={deleteAll}>
+              確定刪除
+            </button>
+            <button type="button" onClick={() => setConfirming(false)}>
+              取消
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setConfirming(true)}>
+            刪除全部上課紀錄
+          </button>
+        )}
+      </div>
+      <p className="hint">課程教材來自 Notion，可隨時重新同步，不在這裡刪除。</p>
+      {message && <p role="status">{message}</p>}
+    </section>
   );
 }
 

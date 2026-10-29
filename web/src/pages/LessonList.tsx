@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, type LessonSummary, type ServiceStatus, type SyncResult } from "../api";
+import { ApiError, type LessonSummary, type ServiceStatus, type SessionListItem, type SyncResult } from "../api";
+import { formatDate } from "../classroom/Classroom";
 import { useDeps } from "../deps";
 
 export function LessonList() {
   const { api } = useDeps();
   const [lessons, setLessons] = useState<LessonSummary[] | null>(null);
+  const [recent, setRecent] = useState<SessionListItem[]>([]);
   const [notion, setNotion] = useState<ServiceStatus | null>(null);
   const [llm, setLlm] = useState<ServiceStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -23,6 +25,7 @@ export function LessonList() {
     void load();
     api.notionStatus().then(setNotion, () => setNotion(null));
     api.llmStatus().then(setLlm, () => setLlm(null));
+    api.listSessions().then((s) => setRecent(s.filter((x) => x.answers > 0).slice(0, 5)), () => setRecent([]));
   }, [api, load]);
 
   async function sync() {
@@ -80,6 +83,24 @@ export function LessonList() {
           </p>
         )}
       </section>
+
+      {recent.length > 0 && (
+        <section aria-label="最近的練習">
+          <h2>最近的練習</h2>
+          <ul className="history">
+            {recent.map((r) => (
+              <li key={r.id}>
+                <a href={r.state === "active" && !r.hasSummary ? `#/lessons/${encodeURIComponent(r.lessonId)}` : `#/sessions/${encodeURIComponent(r.id)}`}>
+                  {r.lessonTitle}
+                </a>
+                <span className="hint">
+                  {formatDate(r.startedAt)}・回答 {r.answers} 次・{r.hasSummary ? "看課後摘要" : r.state === "active" ? "可繼續上課" : "未產生摘要"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section aria-label="課程">
         <h2>選一堂課</h2>

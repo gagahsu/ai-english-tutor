@@ -452,6 +452,79 @@ a {
   background: var(--bg);
 }
 
+/* ---------- history and summary ---------- */
+
+.resume {
+  background: var(--teacher);
+  border-radius: 10px;
+  padding: 0.5rem 1rem 1rem;
+  margin-bottom: 1rem;
+}
+.history {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.history li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.summary h2 {
+  margin-top: 0.5rem;
+}
+.summary h3 {
+  font-size: 1rem;
+  margin: 1rem 0 0.4rem;
+}
+.overview {
+  font-size: 1.05rem;
+}
+.summary-list {
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+}
+.summary-vocab {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.summary-vocab li {
+  background: var(--teacher);
+  border-radius: 8px;
+  padding: 0.2rem 0.6rem;
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+.muted {
+  color: var(--muted);
+}
+.done-card {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+}
+a.button {
+  display: inline-block;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.danger {
+  margin-top: 2rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
 /* Mobile: one column with tabs; the record button stays in the fixed bar (SRS §9). */
 @media (max-width: 960px) {
   .tabs {
