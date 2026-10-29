@@ -127,7 +127,16 @@ export function wordRequest(text: string): string | null {
 
 function controllerInstructions(plan: TurnPlan, student: TurnInput | undefined): string {
   const { current, next } = plan;
-  const lines = [`Current section: "${current.section.title}" (${current.section.kind}).`, `Current question: ${describeStep(current)}.`];
+  const total = current.section.prompts.length;
+  const lines = [
+    `Current section: "${current.section.title}" (${current.section.kind}).`,
+    `Current question${total ? ` (number ${current.questionIndex + 1} of ${total} in the Questions list)` : ""}: ${describeStep(current)}.`,
+  ];
+  if (student && total > current.questionIndex + 1) {
+    lines.push(
+      "If the student's answer already covers a later question in the list, do not ask that one: choose \"advance\" and ask the first later question they have not answered yet.",
+    );
+  }
   if (!student) {
     lines.push('This is the start of the lesson: greet the student in a few words, then ask the current question (and no other question). Use nextAction "follow_up".');
     return lines.join("\n");

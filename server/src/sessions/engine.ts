@@ -5,7 +5,16 @@ import type { Lesson } from "../lessons/types.js";
 import type { ChatMessage, LlmProvider } from "../llm/provider.js";
 import { completeStructured } from "../llm/structured.js";
 import { getSettings, type Settings } from "../settings.js";
-import { decide, filterCorrections, holdPosition, initialProgress, planTurn, type Decision, type TurnPlan } from "./controller.js";
+import {
+  decide,
+  filterCorrections,
+  holdPosition,
+  initialProgress,
+  planTurn,
+  reconcile,
+  type Decision,
+  type TurnPlan,
+} from "./controller.js";
 import { buildTeacherMessages, hasChinese, wordRequest } from "./prompt.js";
 import {
   createSession,
@@ -112,7 +121,10 @@ export async function submitTurn(db: Db, llm: LlmProvider | null, sessionId: str
 
     if (result.ok) {
       const out = result.value;
-      const decision = decide(plan, out);
+      const proposed = decide(plan, out);
+      const text = speakable(composeReply(out, proposed));
+      // Track the question the student actually heard, which may be later than planned.
+      const decision = reconcile(lesson, proposed, text);
       progress = decision.progress;
       completed = decision.lessonCompleted;
       student.corrections = filterCorrections(
@@ -124,7 +136,7 @@ export async function submitTurn(db: Db, llm: LlmProvider | null, sessionId: str
       );
       teacher = {
         sectionId: progress.sectionId ?? plan.current.section.id,
-        text: speakable(composeReply(out, decision)),
+        text,
         meta: { intent: out.intent, nextAction: decision.nextAction, assistance: out.assistance },
       };
     } else {

@@ -46,7 +46,7 @@ describe("sessions", () => {
     expect(session.turns).toEqual([expect.objectContaining({ role: "teacher", text: "Hi! How was your week?", degraded: false })]);
 
     const prompt = llm.requests[0]!.messages[0]!.content;
-    expect(prompt).toContain('Current question: "How was your week?"');
+    expect(prompt).toContain('Current question (number 1 of 2 in the Questions list): "How was your week?"');
     expect(prompt).toContain("SECRET-MODEL-ANSWER"); // the teacher sees the key...
     const view = await request(app).get(`/api/sessions/${session.id}`).expect(200);
     expect(JSON.stringify(view.body)).not.toContain("SECRET-MODEL-ANSWER"); // ...the student never does

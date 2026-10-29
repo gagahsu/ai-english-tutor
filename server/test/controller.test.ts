@@ -8,6 +8,8 @@ import {
   filterCorrections,
   initialProgress,
   planTurn,
+  questionSimilarity,
+  reconcile,
   type Decision,
 } from "../src/sessions/controller.js";
 import { composeReply, concise, newCorrections, openingReply } from "../src/sessions/engine.js";
@@ -298,5 +300,46 @@ describe("newCorrections", () => {
     expect(
       newCorrections([c("I go to work every day"), c("my friend have"), c("my friend have a cold"), c("we go")], ["I go to work"]),
     ).toEqual([c("my friend have"), c("we go")]);
+  });
+});
+
+describe("reconcile", () => {
+  const shortTalk = () =>
+    lesson([
+      section(1, "short-talk", "Short Talk", [
+        "How many times have you traveled by airplane?",
+        "Have you ever been to a foreign country by yourself?",
+        "Do you like shopping in duty-free shops? If so, why?",
+        "Why do you prefer buying items in duty-free shops compared to regular stores?",
+      ]),
+    ]);
+  const decided = (questionIndex: number, nextAction: Decision["nextAction"]): Decision => ({
+    progress: at("s1", questionIndex, { followUps: 1 }),
+    nextAction,
+    replySuffix: null,
+    nextQuestion: null,
+    lessonCompleted: false,
+  });
+
+  it("follows the model to a later question the student had not answered yet", () => {
+    // The student answered Q2 early; the model asks Q3 but calls it a follow-up on Q1.
+    const r = reconcile(shortTalk(), decided(0, "follow_up"), "Great, you always travel with family. Do you like shopping in duty-free shops?");
+    expect(r).toMatchObject({ nextAction: "advance", progress: at("s1", 2) });
+
+    // Advanced to Q2 but the model skipped it because it was already answered.
+    expect(reconcile(shortTalk(), decided(1, "advance"), "Nice! Do you like shopping in duty-free shops?").progress).toEqual(at("s1", 2));
+  });
+
+  it("stays put for follow-ups, rephrased current questions, help turns and backward moves", () => {
+    const l = shortTalk();
+    expect(reconcile(l, decided(0, "follow_up"), "Wow! Which trip was your favorite?").progress).toEqual(at("s1", 0, { followUps: 1 }));
+    expect(reconcile(l, decided(1, "hint"), "Think again: have you traveled to another country alone?").progress.questionIndex).toBe(1);
+    expect(reconcile(l, decided(0, "repeat_or_skip"), "Do you like shopping in duty-free shops?").progress.questionIndex).toBe(0);
+    expect(reconcile(l, decided(2, "follow_up"), "Have you ever been to a foreign country by yourself?").progress.questionIndex).toBe(2);
+  });
+
+  it("matches rephrased questions but not loosely related ones", () => {
+    expect(questionSimilarity("Do you like shopping in duty-free shops?", "Do you like shopping in duty-free shops? If so, why?")).toBe(1);
+    expect(questionSimilarity("Do you often have stopovers when you travel?", "What do you call a short stay in a place between parts of a journey?")).toBe(0);
   });
 });

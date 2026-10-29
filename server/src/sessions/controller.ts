@@ -203,6 +203,73 @@ export function announce(from: Step | null, to: Step): string {
   return to.question ? `${intro} ${to.question}` : intro;
 }
 
+// Chinese help and transcript checks ask their own questions ("Can you try saying that?").
+const RECONCILED_ACTIONS = new Set<NextAction>(["follow_up", "hint", "correct", "advance"]);
+// Below this, a reply's question is not considered to be a given lesson question.
+const MATCH_THRESHOLD = 0.5;
+// A later question must match clearly better than the current one before the pointer moves.
+const MATCH_MARGIN = 0.2;
+
+const STOPWORDS = new Set(
+  "the and you your for are what who how why when where which this that with from have has had did does was were will would can could about into than then there their them they its it's".split(
+    " ",
+  ),
+);
+
+function contentWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+      // Crude stemming so "shops"/"shopping" and "travel"/"traveled" match.
+      .map((w) => w.replace(/(?:ing|ed|es|s)$/, "").replace(/(.)\1$/, "$1") || w),
+  );
+}
+
+/** Dice overlap of content words, 0..1; tolerant of the model rephrasing a lesson question. */
+export function questionSimilarity(a: string, b: string): number {
+  const x = contentWords(a);
+  const y = contentWords(b);
+  if (!x.size || !y.size) return 0;
+  let shared = 0;
+  for (const w of x) if (y.has(w)) shared++;
+  return (2 * shared) / (x.size + y.size);
+}
+
+/**
+ * Keeps Progress on the question the student actually heard. When the student answers ahead,
+ * the model skips to a later question of the section (sometimes calling it a follow-up); the
+ * pointer then moves there instead of the lesson re-asking or drifting one question behind.
+ * Only forward moves within the section are taken, and only on a clear match.
+ */
+export function reconcile(lesson: Lesson, decision: Decision, reply: string): Decision {
+  if (!RECONCILED_ACTIONS.has(decision.nextAction)) return decision;
+  const { sectionId, questionIndex } = decision.progress;
+  const section = lesson.sections.find((s) => s.id === sectionId);
+  const asked = reply
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .findLast((s) => s.trim().endsWith("?"));
+  if (!section || !asked || section.prompts.length <= questionIndex + 1) return decision;
+
+  const current = questionSimilarity(asked, section.prompts[questionIndex] ?? "");
+  let best = { index: -1, score: 0 };
+  section.prompts.forEach((prompt, index) => {
+    if (index <= questionIndex) return;
+    const score = questionSimilarity(asked, prompt);
+    if (score > best.score) best = { index, score };
+  });
+  if (best.score < MATCH_THRESHOLD || best.score < current + MATCH_MARGIN) return decision;
+
+  return {
+    ...decision,
+    progress: { sectionId, questionIndex: best.index, followUps: 0, pendingAssistance: null },
+    nextAction: "advance",
+    nextQuestion: section.prompts[best.index] ?? null,
+  };
+}
+
 /**
  * Balanced correction (SRS §4.3): at most one blocking error is corrected now; everything else
  * is deferred to the summary. Unverified STT text is never graded (FR-05), and neither is a
