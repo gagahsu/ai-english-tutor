@@ -211,6 +211,42 @@ export function updateSectionContent(db: Db, lessonId: string, sectionId: string
   return result.changes ? getSection(db, lessonId, sectionId) : null;
 }
 
+/**
+ * Stores an LLM extraction result (or its failure) for the section source it was made from.
+ * Does nothing if the section was re-synced with a different source meanwhile.
+ */
+export function saveExtraction(db: Db, sectionId: string, sourceHash: string, content: SectionContent | null): boolean {
+  const result = content
+    ? db
+        .prepare(
+          `UPDATE sections SET prompts = ?, vocabulary = ?, reference_answers = ?,
+             edited_by_user = 0, extraction_status = 'done'
+           WHERE id = ? AND source_hash = ?`,
+        )
+        .run(
+          JSON.stringify(content.prompts),
+          JSON.stringify(content.vocabulary),
+          JSON.stringify(content.referenceAnswers),
+          sectionId,
+          sourceHash,
+        )
+    : db
+        .prepare("UPDATE sections SET extraction_status = 'failed' WHERE id = ? AND source_hash = ?")
+        .run(sectionId, sourceHash);
+  return result.changes > 0;
+}
+
+/** Keeps the user's correction for a section whose Notion source changed (`needs_review` → `done`). */
+export function keepSectionCorrection(db: Db, lessonId: string, sectionId: string): Section | null {
+  const result = db
+    .prepare(
+      `UPDATE sections SET extraction_status = 'done'
+       WHERE id = ? AND lesson_id = ? AND extraction_status = 'needs_review'`,
+    )
+    .run(sectionId, lessonId);
+  return result.changes ? getSection(db, lessonId, sectionId) : null;
+}
+
 /** True if `blockId` is a file resource of some synced section, so the app only proxies its own files. */
 export function isKnownResourceBlock(db: Db, blockId: string): boolean {
   const rows = db

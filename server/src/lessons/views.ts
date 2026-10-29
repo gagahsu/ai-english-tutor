@@ -29,6 +29,8 @@ export function toStudentLesson(l: Lesson) {
         prompts: s.prompts,
         vocabulary: s.vocabulary.map((v) => ({ term: v.term, meaningZh: v.meaningZh })),
         resources: s.resources.map(toStudentResource),
+        // Lets the client know whether to call POST /api/lessons/:id/extract before class.
+        extractionStatus: s.extractionStatus,
       })),
   };
 }

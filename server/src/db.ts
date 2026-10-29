@@ -42,6 +42,54 @@ const migrations: string[] = [
     UNIQUE (lesson_id, notion_block_id)
   );
   `,
+  `
+  CREATE TABLE settings (
+    id   INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL
+  );
+
+  CREATE TABLE sessions (
+    id                TEXT PRIMARY KEY,
+    lesson_id         TEXT NOT NULL REFERENCES lessons(id),
+    state             TEXT NOT NULL CHECK (state IN ('active', 'completed', 'finished')),
+    progress          TEXT NOT NULL,
+    settings_snapshot TEXT NOT NULL,
+    started_at        TEXT NOT NULL,
+    ended_at          TEXT
+  );
+
+  -- One row per message. Student rows carry the request id used for dedup; teacher rows
+  -- point at the student turn they answer (null for the opening question).
+  CREATE TABLE turns (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq                 INTEGER NOT NULL,
+    role                TEXT NOT NULL CHECK (role IN ('teacher', 'student')),
+    section_id          TEXT,
+    request_id          TEXT,
+    in_reply_to         TEXT REFERENCES turns(id),
+    input_language      TEXT,
+    transcript          TEXT,
+    verified_by_student INTEGER,
+    teacher_text        TEXT,
+    meta                TEXT,
+    created_at          TEXT NOT NULL,
+    UNIQUE (session_id, seq),
+    UNIQUE (session_id, request_id)
+  );
+
+  CREATE TABLE feedback (
+    id            TEXT PRIMARY KEY,
+    turn_id       TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    type          TEXT NOT NULL,
+    original      TEXT NOT NULL,
+    suggestion    TEXT NOT NULL,
+    reason_zh     TEXT,
+    deferred      INTEGER NOT NULL,
+    review_status TEXT NOT NULL DEFAULT 'new'
+  );
+  CREATE INDEX feedback_turn ON feedback (turn_id);
+  `,
 ];
 
 export function openDatabase(file: string): Db {

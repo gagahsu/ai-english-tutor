@@ -13,7 +13,7 @@ beforeEach(() => {
   db = openDatabase(":memory:");
   notion = new FakeGateway();
   notion.addLesson("A2 基礎會話c 3/10", sampleLessonBlocks());
-  app = createApp({ db, notion: { gateway: notion, databaseId: "db-id" } });
+  app = createApp({ db, notion: { gateway: notion, databaseId: "db-id" }, llm: null });
 });
 
 async function syncedLessonId() {
@@ -52,6 +52,7 @@ describe("lesson API", () => {
       prompts: ["A bag for clothes."],
       vocabulary: [{ term: "suitcase", meaningZh: "行李箱" }],
       resources: [],
+      extractionStatus: "done",
     });
   });
 
@@ -92,7 +93,7 @@ describe("lesson API", () => {
 
 describe("without Notion configured", () => {
   beforeEach(() => {
-    app = createApp({ db, notion: null });
+    app = createApp({ db, notion: null, llm: null });
   });
 
   it("reports status and refuses to sync, but still serves synced lessons", async () => {

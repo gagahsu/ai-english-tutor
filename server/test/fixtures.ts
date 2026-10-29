@@ -1,3 +1,4 @@
+import type { CompletionRequest, LlmProvider } from "../src/llm/provider.js";
 import type { LessonRow, NotionGateway } from "../src/notion/gateway.js";
 import type { RawBlock } from "../src/notion/markdown.js";
 
@@ -64,3 +65,27 @@ export function sampleLessonBlocks(): RawBlock[] {
     toggleH1("Gramma", [block("paragraph", "Use some in positive sentences.")]),
   ];
 }
+
+type FakeReply = string | Error | ((req: CompletionRequest) => string);
+
+/** Replies are consumed in order; every request is recorded for assertions. */
+export class FakeLlm implements LlmProvider {
+  model = "fake-model";
+  requests: CompletionRequest[] = [];
+  private queue: FakeReply[] = [];
+
+  reply(...replies: FakeReply[]): this {
+    this.queue.push(...replies);
+    return this;
+  }
+  async complete(req: CompletionRequest) {
+    this.requests.push(structuredClone(req));
+    const next = this.queue.shift();
+    if (next === undefined) throw new Error("FakeLlm: no reply queued");
+    if (next instanceof Error) throw next;
+    return { text: typeof next === "function" ? next(req) : next };
+  }
+}
+
+export const teacherJson = (out: Record<string, unknown> = {}) =>
+  JSON.stringify({ teacherReply: "Nice! Tell me more.", intent: "answer", nextAction: "follow_up", corrections: [], assistance: null, ...out });

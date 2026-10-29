@@ -1,20 +1,34 @@
 import express, { type ErrorRequestHandler } from "express";
 import { ZodError } from "zod";
 import type { Db } from "./db.js";
-import { AppError, notionNotConfigured } from "./errors.js";
-import { getLesson, getSection, isKnownResourceBlock, listLessons, updateSectionContent } from "./lessons/repository.js";
+import { AppError, llmNotConfigured, notionNotConfigured } from "./errors.js";
+import { extractLesson, extractRequestSchema } from "./lessons/extract.js";
+import {
+  getLesson,
+  getSection,
+  isKnownResourceBlock,
+  keepSectionCorrection,
+  listLessons,
+  updateSectionContent,
+} from "./lessons/repository.js";
 import { syncAllLessons, syncLesson } from "./lessons/sync.js";
 import { sectionContentSchema } from "./lessons/types.js";
 import { toStudentLesson, toStudentLessonSummary } from "./lessons/views.js";
+import type { LlmProvider } from "./llm/provider.js";
 import type { NotionGateway } from "./notion/gateway.js";
+import { sessionView, startSession, submitTurn } from "./sessions/engine.js";
+import { createSessionSchema, turnInputSchema } from "./sessions/types.js";
+import { getSettings, settingsPatchSchema, updateSettings } from "./settings.js";
 
 export interface AppDeps {
   db: Db;
   /** Null when NOTION_TOKEN or NOTION_LESSONS_DATABASE_ID is missing; synced lessons stay usable. */
   notion: { gateway: NotionGateway; databaseId: string } | null;
+  /** Null when MISTRAL_API_KEY is missing; lessons open with a fixed line and turns return LLM_NOT_CONFIGURED. */
+  llm: LlmProvider | null;
 }
 
-export function createApp({ db, notion }: AppDeps) {
+export function createApp({ db, notion, llm }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "100kb" }));
@@ -22,6 +36,10 @@ export function createApp({ db, notion }: AppDeps) {
   const requireNotion = () => {
     if (!notion) throw notionNotConfigured();
     return notion;
+  };
+  const requireLlm = () => {
+    if (!llm) throw llmNotConfigured();
+    return llm;
   };
 
   app.get("/api/notion/status", async (_req, res) => {
@@ -36,6 +54,10 @@ export function createApp({ db, notion }: AppDeps) {
       if (!(err instanceof AppError)) throw err;
       res.json({ configured: true, ok: false, error: toBody(err).error });
     }
+  });
+
+  app.get("/api/llm/status", (_req, res) => {
+    res.json(llm ? { configured: true, model: llm.model } : { configured: false, error: toBody(llmNotConfigured()).error });
   });
 
   app.post("/api/lessons/sync", async (_req, res) => {
@@ -69,6 +91,40 @@ export function createApp({ db, notion }: AppDeps) {
     const section = updateSectionContent(db, req.params.id, req.params.sectionId, content);
     if (!section) throw sectionNotFound();
     res.json(section);
+  });
+
+  // Section extraction (SRS §6.4) runs per lesson on demand, so a first sync of every
+  // lesson does not spend LLM quota on lessons that are never taught.
+  app.post("/api/lessons/:id/extract", async (req, res) => {
+    const { reextract } = extractRequestSchema.parse(req.body ?? {});
+    res.json(await extractLesson(db, requireLlm(), req.params.id, reextract));
+  });
+
+  // For a corrected section whose Notion source changed: keep the correction instead of re-extracting.
+  app.post("/api/lessons/:id/sections/:sectionId/keep-correction", (req, res) => {
+    const section = keepSectionCorrection(db, req.params.id, req.params.sectionId);
+    if (!section) throw new AppError(409, "NOTHING_TO_REVIEW", "這個章節目前不需要確認修正。");
+    res.json(section);
+  });
+
+  app.get("/api/settings", (_req, res) => {
+    res.json(getSettings(db));
+  });
+
+  app.put("/api/settings", (req, res) => {
+    res.json(updateSettings(db, settingsPatchSchema.parse(req.body)));
+  });
+
+  app.post("/api/sessions", async (req, res) => {
+    res.status(201).json(await startSession(db, llm, createSessionSchema.parse(req.body)));
+  });
+
+  app.get("/api/sessions/:id", (req, res) => {
+    res.json(sessionView(db, req.params.id));
+  });
+
+  app.post("/api/sessions/:id/turns", async (req, res) => {
+    res.json(await submitTurn(db, llm, req.params.id, turnInputSchema.parse(req.body)));
   });
 
   // Notion-hosted file URLs expire, so files are resolved on demand.

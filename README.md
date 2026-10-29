@@ -2,11 +2,11 @@
 
 使用 Notion 英文課筆記作為教材的 AI 英文家教網站規劃專案，目標是讓學習者透過**輪流語音對話**練習英語口說，並以免費優先的技術方案實作。
 
-> 專案狀態：P0-1 資料層（Notion 同步、SQLite、課程 API）已完成；尚無前端，P0-2 起尚未開始。
+> 專案狀態：P0-1 資料層（Notion 同步、SQLite、課程 API）與 P0-2 教學引擎（Mistral 介接、章節抽取、教師控制器、上課 API）已完成；尚無前端，下一步為 P0-3 語音介面。
 
 ## 開發
 
-需要 Node.js 22。複製 `.env.example` 為 `.env` 並填入 Notion 設定後：
+需要 Node.js 22。複製 `.env.example` 為 `.env` 並填入 Notion 與 Mistral 設定後：
 
 ```sh
 npm install
